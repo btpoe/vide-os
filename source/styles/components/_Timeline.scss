@@ -1,0 +1,68 @@
+.Timeline {
+    height: 100%;
+    overflow: auto;
+    width: 100%;
+
+    &::-webkit-scrollbar {
+        width: 5px;
+    }
+
+    &::-webkit-scrollbar-track {
+        background: #ddd;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background: #666;
+    }
+
+    &-clip {
+        left: 0;
+        position: absolute;
+        top: 0;
+    }
+
+    &-composition {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 100%;
+    }
+
+    &-track {
+        border-top: 1px solid #333;
+        border-bottom: 1px solid #111;
+        position: relative;
+        width: 100%;
+
+        &--audio {
+            height: 55px;
+
+            .Timeline-track--video + & {
+                border-top-width: 10px;
+                margin-top: -1px;
+            }
+        }
+
+        &--video {
+            height: 70px;
+        }
+    }
+
+    &-playhead {
+
+    }
+
+    &-needle {
+        border-left: 1px solid rgba(#fff, 0.9);
+        bottom: 0;
+        left: calc(50% - 0.5px);
+        position: absolute;
+        top: 10px;
+    }
+
+    &-track {
+        background: #222;
+        overflow: auto;
+        width: 100%;
+    }
+}

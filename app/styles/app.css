@@ -1,0 +1,199 @@
+*, *::before, *::after {
+  box-sizing: inherit; }
+
+::-webkit-scrollbar {
+  width: 5px; }
+
+::-webkit-scrollbar-track {
+  background: #ddd; }
+
+::-webkit-scrollbar-thumb {
+  background: #666; }
+
+html, body {
+  background: #222;
+  box-sizing: border-box;
+  color: #fff;
+  font-family: 'Open Sans', sans-serif;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  width: 100%; }
+
+ul, li {
+  list-style-type: none;
+  margin: 0;
+  padding: 0; }
+
+img {
+  max-width: 100%; }
+
+.DivRow {
+  background: #333;
+  border-bottom: 1px solid #555555;
+  border-top: 1px solid #282828;
+  cursor: row-resize;
+  height: 4px; }
+
+.DivCol {
+  background: #333;
+  border-left: 1px solid #282828;
+  border-right: 1px solid #555555;
+  cursor: col-resize;
+  width: 4px; }
+
+.NavBar {
+  color: #fff;
+  position: relative;
+  z-index: 1; }
+  .NavBar > ul {
+    display: flex; }
+  .NavBar li {
+    font-size: 15px;
+    padding: 3px 10px;
+    position: relative; }
+    .NavBar li ul {
+      display: none;
+      left: 0;
+      position: absolute;
+      top: 100%; }
+    .NavBar li:hover {
+      background: rgba(255, 255, 255, 0.05); }
+      .NavBar li:hover > ul {
+        display: block; }
+    .NavBar li li > ul {
+      left: 100%;
+      top: 0; }
+
+.Pane {
+  align-items: center;
+  background: #3b3f41;
+  display: flex;
+  flex-grow: 100;
+  justify-content: center;
+  padding: 8px;
+  position: relative; }
+
+.PaneRow {
+  display: flex;
+  flex-grow: 100; }
+
+.Media {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  width: 100%; }
+  .Media > header {
+    align-items: center;
+    display: flex;
+    font-size: 1.125rem;
+    line-height: 1;
+    margin-bottom: 8px;
+    min-height: 1em; }
+    .Media > header > span {
+      position: relative; }
+    .Media > header img {
+      transition: opacity 0.2s, visibility 0.2s; }
+      .Media > header img.is-inactive {
+        opacity: 0;
+        visibility: hidden; }
+    .Media > header h2 {
+      font-size: 1em;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%; }
+      .Media > header h2.current-folder-enter {
+        opacity: 0;
+        transform: translateX(1em);
+        transition: opacity 0.2s, transform 0.2s; }
+      .Media > header h2.current-folder-enter.current-folder-enter-active {
+        opacity: 1;
+        transform: translateX(0); }
+      .Media > header h2.current-folder-leave {
+        position: absolute;
+        top: 0;
+        transition: opacity 0.2s, transform 0.2s; }
+      .Media > header h2.current-folder-leave.current-folder-leave-active {
+        opacity: 0;
+        transform: translateX(-1em); }
+  .Media-fileList {
+    align-content: flex-start;
+    align-items: flex-start;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    flex-grow: 1;
+    overflow-x: auto; }
+  .Media-file {
+    -webkit-appearance: none;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    flex-basis: 140px;
+    font: inherit;
+    font-size: 0.9em;
+    text-align: center;
+    padding: 1rem; }
+    .Media-file:focus {
+      border-radius: 10px;
+      box-shadow: inset 0 0 0 2px currentColor;
+      outline: 0; }
+
+.Preview-viewport {
+  background: #000;
+  padding-bottom: 56.25%;
+  position: relative;
+  width: 100%; }
+  .Preview-viewport iframe {
+    border: 0;
+    height: 100%;
+    left: 0;
+    position: absolute;
+    top: 0;
+    width: 100%; }
+
+.Timeline {
+  height: 100%;
+  overflow: auto;
+  width: 100%; }
+  .Timeline::-webkit-scrollbar {
+    width: 5px; }
+  .Timeline::-webkit-scrollbar-track {
+    background: #ddd; }
+  .Timeline::-webkit-scrollbar-thumb {
+    background: #666; }
+  .Timeline-clip {
+    left: 0;
+    position: absolute;
+    top: 0; }
+  .Timeline-composition {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 100%; }
+  .Timeline-track {
+    border-top: 1px solid #333;
+    border-bottom: 1px solid #111;
+    position: relative;
+    width: 100%; }
+    .Timeline-track--audio {
+      height: 55px; }
+      .Timeline-track--video + .Timeline-track--audio {
+        border-top-width: 10px;
+        margin-top: -1px; }
+    .Timeline-track--video {
+      height: 70px; }
+  .Timeline-needle {
+    border-left: 1px solid rgba(255, 255, 255, 0.9);
+    bottom: 0;
+    left: calc(50% - 0.5px);
+    position: absolute;
+    top: 10px; }
+  .Timeline-track {
+    background: #222;
+    overflow: auto;
+    width: 100%; }

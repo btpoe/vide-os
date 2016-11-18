@@ -1,0 +1,25 @@
+{
+  "name": "Vide-OS",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Fully-featured video editor",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Brandon Poe <brandonpoe@me.co> (http://brandonpoe.com)",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^1.4.1",
+    "electron-reload": "^1.0.3"
+  },
+  "dependencies": {
+    "golden-layout": "^1.5.6",
+    "jquery": "^3.1.1",
+    "react": "^15.3.2",
+    "react-addons-css-transition-group": "^15.3.2",
+    "react-dom": "^15.3.2",
+    "react-redux": "^4.4.6",
+    "redux": "^3.6.0"
+  }
+}

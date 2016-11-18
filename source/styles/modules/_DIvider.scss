@@ -1,0 +1,15 @@
+.DivRow {
+    background: #333;
+    border-bottom: 1px solid #555555;
+    border-top: 1px solid #282828;
+    cursor: row-resize;
+    height: 4px;
+}
+
+.DivCol {
+    background: #333;
+    border-left: 1px solid #282828;
+    border-right: 1px solid #555555;
+    cursor: col-resize;
+    width: 4px;
+}

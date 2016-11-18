@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vide-OS</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300">
+    <link rel="stylesheet" href="styles/goldenlayout-base.css"/>
+    <link rel="stylesheet" href="styles/goldenlayout-dark-theme.css"/>
+    <link rel="stylesheet" href="styles/app.css"/>
+  </head>
+  <body id="AppRoot"></body>
+  <script>
+    window.$ = window.jQuery = require('jquery');
+    window.React = require('react');
+    window.ReactDOM = require('react-dom');
+    window.GoldenLayout = require('golden-layout');
+    require('./js/app.js');
+  </script>
+</html>
