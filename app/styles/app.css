@@ -166,10 +166,11 @@ img {
     background: #ddd; }
   .Timeline::-webkit-scrollbar-thumb {
     background: #666; }
-  .Timeline-clip {
-    left: 0;
-    position: absolute;
-    top: 0; }
+  .Timeline-clip--video {
+    background: #31a5bc;
+    border: 1px solid;
+    border-color: rgba(218, 232, 228, 0.41) rgba(54, 78, 71, 0.36) rgba(54, 78, 71, 0.36) rgba(218, 232, 228, 0.41);
+    padding: 8px; }
   .Timeline-composition {
     display: flex;
     flex-direction: column;
@@ -178,8 +179,7 @@ img {
   .Timeline-track {
     border-top: 1px solid #333;
     border-bottom: 1px solid #111;
-    position: relative;
-    width: 100%; }
+    display: flex; }
     .Timeline-track--audio {
       height: 55px; }
       .Timeline-track--video + .Timeline-track--audio {
@@ -193,7 +193,3 @@ img {
     left: calc(50% - 0.5px);
     position: absolute;
     top: 10px; }
-  .Timeline-track {
-    background: #222;
-    overflow: auto;
-    width: 100%; }

@@ -1,11 +1,21 @@
+const { createStore } = require('redux');
+const { Provider, connect } = require('react-redux');
+const { addClip } = require('./timeline/actions');
+const reducer = require('./timeline/reducers');
+
+const store = createStore(reducer);
+
 class VideoClip extends React.Component {
     render() {
         return React.createElement(
             'div',
             {
-                className: 'Timeline-clip Timeline-clip--video'
+                className: 'Timeline-clip Timeline-clip--video',
+                style: {
+                    width: `${this.props.duration/this.props.zoom}px`
+                }
             },
-            'vid clip'
+            React.createElement('img', { src: 'http://placehold.it/50x50'})
         );
     }
 }
@@ -13,7 +23,7 @@ class VideoClip extends React.Component {
 class VideoTrack extends React.Component {
     render() {
         const clips = this.props.clips.map((clip, i) =>
-            React.createElement(VideoClip, Object.assign(clip, { key: i }))
+            React.createElement(VideoClip, Object.assign(clip, { zoom: this.props.zoom, key: i }))
         );
 
         return React.createElement(
@@ -31,7 +41,10 @@ class AudioClip extends React.Component {
         return React.createElement(
             'div',
             {
-                className: 'Timeline-clip Timeline-clip--audio'
+                className: 'Timeline-clip Timeline-clip--audio',
+                style: {
+                    width: `${this.props.duration/this.props.zoom}px`
+                }
             },
             'aud clip'
         );
@@ -41,7 +54,7 @@ class AudioClip extends React.Component {
 class AudioTrack extends React.Component {
     render() {
         const clips = this.props.clips.map((clip, i) =>
-            React.createElement(AudioClip, Object.assign(clip, { key: i }))
+            React.createElement(AudioClip, Object.assign(clip, { zoom: this.props.zoom, key: i }))
         );
 
         return React.createElement(
@@ -59,8 +72,6 @@ class Composition extends React.Component {
         super();
 
         this.state = {
-            clips: [],
-            duration: 10000,
             isDragging: false
         };
 
@@ -88,34 +99,42 @@ class Composition extends React.Component {
     handleDrop(e) {
         e.stopPropagation();
 
-        const clips = this.state.clips.slice();
-        clips.push({
-            src: e.dataTransfer.getData('text/plain'),
-            tracks: {
-                video: 1,
-                audio: 1
-            },
-            startAt: 0,
-            clipStart: 0
+        const src = e.dataTransfer.getData('text/plain');
+        const vid = document.createElement('video');
+        vid.addEventListener('durationchange', () => {
+            store.dispatch(addClip({
+                src,
+                tracks: {
+                    video: 1,
+                    audio: 1
+                },
+                startAt: 0,
+                clipStart: 0,
+                duration: vid.duration * 1000
+            }));
         });
 
-        this.setState({ clips });
+        vid.src = src;
+
         return false;
     }
 
     render() {
+        const { zoom } = this.props.zoom;
+
         const videoTracks = {
-            1: { clips: [], key: 'video1' }
+            1: { clips: [], zoom, key: 'video1' }
         };
         const audioTracks = {
-            1: { clips: [], key: 'audio1' }
+            1: { clips: [], zoom, key: 'audio1' }
         };
 
-        this.state.clips.forEach(clip => {
+        this.props.clips.forEach(clip => {
             if (clip.tracks.video) {
                 if (!videoTracks[clip.tracks.video]) {
                     videoTracks[clip.tracks.video] = {
                         clips: [],
+                        zoom,
                         key: `video${clip.tracks.video}`
                     };
                 }
@@ -125,6 +144,7 @@ class Composition extends React.Component {
                 if (!audioTracks[clip.tracks.audio]) {
                     audioTracks[clip.tracks.audio] = {
                         clips: [],
+                        zoom,
                         key: `audio${clip.tracks.audio}`
                     };
                 }
@@ -148,7 +168,7 @@ class Composition extends React.Component {
                 ref: 'composition',
                 className: `Timeline-composition ${this.state.isDragging ? 'is-dragging' : ''}`,
                 style: {
-                    width: `${this.state.duration}px`
+                    width: `${this.props.duration/zoom}px`
                 },
                 onDragEnter: this.handleDragEnter,
                 onDragOver: this.handleDragOver,
@@ -161,29 +181,30 @@ class Composition extends React.Component {
 }
 
 class Timeline extends React.Component {
-    constructor() {
-        super();
-        this.state = {
-            zoom: 1,
-            composition: {
-                clips: [],
-                duration: 10000
-            }
-        };
-    }
-
     render() {
         return React.createElement(
             'div',
             {
                 className: 'Timeline'
             },
-            React.createElement(Composition, this.state.composition)
+            React.createElement(Composition, this.props.composition)
         );
     }
 }
 
-module.exports = Timeline;
+const ConnectedTimeline = connect(state => ({composition: state.composition}))(Timeline);
+
+class WrapProvider extends React.Component {
+    render() {
+        return React.createElement(
+            Provider,
+            { store },
+            React.createElement(ConnectedTimeline)
+        )
+    }
+}
+
+module.exports = WrapProvider;
 
 // const exampleClip = {
 //     src: 'path/to/media',
