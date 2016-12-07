@@ -2,13 +2,14 @@
   box-sizing: inherit; }
 
 ::-webkit-scrollbar {
-  width: 5px; }
+  width: 6px;
+  height: 10px; }
 
 ::-webkit-scrollbar-track {
-  background: #ddd; }
+  background: #666; }
 
 ::-webkit-scrollbar-thumb {
-  background: #666; }
+  background: #ccc; }
 
 html, body {
   background: #222;
@@ -160,12 +161,6 @@ img {
   height: 100%;
   overflow: auto;
   width: 100%; }
-  .Timeline::-webkit-scrollbar {
-    width: 5px; }
-  .Timeline::-webkit-scrollbar-track {
-    background: #ddd; }
-  .Timeline::-webkit-scrollbar-thumb {
-    background: #666; }
   .Timeline-clip--video {
     background: #31a5bc;
     border: 1px solid;
@@ -176,6 +171,16 @@ img {
     flex-direction: column;
     justify-content: center;
     min-height: 100%; }
+  .Timeline-needle {
+    border-left: 1px solid rgba(255, 255, 255, 0.9);
+    bottom: 0;
+    left: calc(50% - 0.5px);
+    position: absolute;
+    top: 10px; }
+  .Timeline-playhead {
+    background: blue;
+    height: 10px;
+    margin-bottom: auto; }
   .Timeline-track {
     border-top: 1px solid #333;
     border-bottom: 1px solid #111;
@@ -187,9 +192,5 @@ img {
         margin-top: -1px; }
     .Timeline-track--video {
       height: 70px; }
-  .Timeline-needle {
-    border-left: 1px solid rgba(255, 255, 255, 0.9);
-    bottom: 0;
-    left: calc(50% - 0.5px);
-    position: absolute;
-    top: 10px; }
+    .Timeline-track:last-child {
+      margin-bottom: auto; }

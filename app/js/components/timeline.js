@@ -5,7 +5,26 @@ const reducer = require('./timeline/reducers');
 
 const store = createStore(reducer);
 
+const THUMB_SIZE = 50;
+
+function same(obj1, obj2, prop) {
+    if (Array.isArray(prop)) {
+        return prop.every(p => obj1[p] === obj2[p]);
+    }
+    return obj1[prop] === obj2[prop];
+}
+
 class VideoClip extends React.Component {
+    componentDidMount() {
+        this.componentDidUpdate({});
+    }
+
+    componentDidUpdate(prevProps) {
+        if (!same(this.props, prevProps, 'clipStart')) {
+            this.refs.srcVideo.currentTime = this.props.clipStart / 1000;
+        }
+    }
+
     render() {
         return React.createElement(
             'div',
@@ -15,7 +34,7 @@ class VideoClip extends React.Component {
                     width: `${this.props.duration/this.props.zoom}px`
                 }
             },
-            React.createElement('img', { src: 'http://placehold.it/50x50'})
+            React.createElement('video', { ref: 'srcVideo', src: this.props.src, height: THUMB_SIZE })
         );
     }
 }
@@ -120,7 +139,7 @@ class Composition extends React.Component {
     }
 
     render() {
-        const { zoom } = this.props.zoom;
+        const { zoom } = this.props;
 
         const videoTracks = {
             1: { clips: [], zoom, key: 'video1' }
@@ -205,14 +224,3 @@ class WrapProvider extends React.Component {
 }
 
 module.exports = WrapProvider;
-
-// const exampleClip = {
-//     src: 'path/to/media',
-//     tracks: {
-//         video: 2,
-//         audio: 1
-//     },
-//     startAt: 12341234,
-//     clipStart: 231412423,
-//     clipEnd: 12312341,
-// };
