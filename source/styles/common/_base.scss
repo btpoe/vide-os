@@ -3,15 +3,16 @@
 }
 
 ::-webkit-scrollbar {
-    width: 5px;
+    width: 6px;
+    height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #ddd;
+    background: #666;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #666;
+    background: #ccc;
 }
 
 html, body {

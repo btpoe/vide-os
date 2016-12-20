@@ -3,7 +3,7 @@ const watch = require('node-watch');
 const styles = require('./tasks/styles');
 // const rollup = require('rollup');
 // const rollupWatch = require('rollup-watch');
-const rollupConfig = require('./rollup.config');
+// const rollupConfig = require('./rollup.config');
 
 // browserSync.init({
 //     server: 'build',

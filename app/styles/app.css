@@ -2,13 +2,14 @@
   box-sizing: inherit; }
 
 ::-webkit-scrollbar {
-  width: 5px; }
+  width: 6px;
+  height: 10px; }
 
 ::-webkit-scrollbar-track {
-  background: #ddd; }
+  background: #666; }
 
 ::-webkit-scrollbar-thumb {
-  background: #666; }
+  background: #ccc; }
 
 html, body {
   background: #222;
@@ -28,56 +29,6 @@ ul, li {
 
 img {
   max-width: 100%; }
-
-.DivRow {
-  background: #333;
-  border-bottom: 1px solid #555555;
-  border-top: 1px solid #282828;
-  cursor: row-resize;
-  height: 4px; }
-
-.DivCol {
-  background: #333;
-  border-left: 1px solid #282828;
-  border-right: 1px solid #555555;
-  cursor: col-resize;
-  width: 4px; }
-
-.NavBar {
-  color: #fff;
-  position: relative;
-  z-index: 1; }
-  .NavBar > ul {
-    display: flex; }
-  .NavBar li {
-    font-size: 15px;
-    padding: 3px 10px;
-    position: relative; }
-    .NavBar li ul {
-      display: none;
-      left: 0;
-      position: absolute;
-      top: 100%; }
-    .NavBar li:hover {
-      background: rgba(255, 255, 255, 0.05); }
-      .NavBar li:hover > ul {
-        display: block; }
-    .NavBar li li > ul {
-      left: 100%;
-      top: 0; }
-
-.Pane {
-  align-items: center;
-  background: #3b3f41;
-  display: flex;
-  flex-grow: 100;
-  justify-content: center;
-  padding: 8px;
-  position: relative; }
-
-.PaneRow {
-  display: flex;
-  flex-grow: 100; }
 
 .Media {
   display: flex;
@@ -160,12 +111,6 @@ img {
   height: 100%;
   overflow: auto;
   width: 100%; }
-  .Timeline::-webkit-scrollbar {
-    width: 5px; }
-  .Timeline::-webkit-scrollbar-track {
-    background: #ddd; }
-  .Timeline::-webkit-scrollbar-thumb {
-    background: #666; }
   .Timeline-clip--video {
     background: #31a5bc;
     border: 1px solid;
@@ -175,7 +120,26 @@ img {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    min-height: 100%; }
+    margin: 0 10px;
+    min-height: 100%;
+    position: relative; }
+  .Timeline-playhead {
+    background: red;
+    height: 20px;
+    margin-bottom: auto; }
+    .Timeline-playhead-head {
+      border: 10px solid transparent;
+      border-bottom: 0;
+      border-top: 20px solid blue;
+      margin: 0 -10px 0 -11px;
+      width: 21px; }
+    .Timeline-playhead-line {
+      border-left: 1px solid;
+      bottom: 0;
+      left: 0;
+      position: absolute;
+      top: 0;
+      z-index: 10; }
   .Timeline-track {
     border-top: 1px solid #333;
     border-bottom: 1px solid #111;
@@ -187,9 +151,5 @@ img {
         margin-top: -1px; }
     .Timeline-track--video {
       height: 70px; }
-  .Timeline-needle {
-    border-left: 1px solid rgba(255, 255, 255, 0.9);
-    bottom: 0;
-    left: calc(50% - 0.5px);
-    position: absolute;
-    top: 10px; }
+    .Timeline-track:last-child {
+      margin-bottom: auto; }

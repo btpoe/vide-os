@@ -1,3 +1,5 @@
+const Mousetrap = require('mousetrap');
+const Draggable = require('react-draggable');
 const { createStore } = require('redux');
 const { Provider, connect } = require('react-redux');
 const { addClip } = require('./timeline/actions');
@@ -5,7 +7,26 @@ const reducer = require('./timeline/reducers');
 
 const store = createStore(reducer);
 
+const THUMB_SIZE = 50;
+
+function same(obj1, obj2, prop) {
+    if (Array.isArray(prop)) {
+        return prop.every(p => obj1[p] === obj2[p]);
+    }
+    return obj1[prop] === obj2[prop];
+}
+
 class VideoClip extends React.Component {
+    componentDidMount() {
+        this.componentDidUpdate({});
+    }
+
+    componentDidUpdate(prevProps) {
+        if (!same(this.props, prevProps, 'clipStart')) {
+            this.refs.srcVideo.currentTime = this.props.clipStart / 1000;
+        }
+    }
+
     render() {
         return React.createElement(
             'div',
@@ -15,7 +36,7 @@ class VideoClip extends React.Component {
                     width: `${this.props.duration/this.props.zoom}px`
                 }
             },
-            React.createElement('img', { src: 'http://placehold.it/50x50'})
+            React.createElement('video', { ref: 'srcVideo', src: this.props.src, height: THUMB_SIZE })
         );
     }
 }
@@ -67,18 +88,92 @@ class AudioTrack extends React.Component {
     }
 }
 
+class CompPlayhead extends React.Component {
+    constructor() {
+        super();
+
+        this.state = {
+            x: 0
+        };
+
+        this.handleDrag = this.handleDrag.bind(this);
+    }
+
+    handleDrag(e, data) {
+        this.props.composition.currentTime = data.x * this.props.composition.props.zoom;
+    }
+
+    render() {
+        return (
+            React.createElement('div', { className: 'Timeline-playhead'},
+                React.createElement(
+                    Draggable, {
+                        axis: 'x',
+                        bounds: 'parent',
+                        handle: '.Timeline-playhead-head',
+                        onDrag: this.handleDrag,
+                        position: {x: this.props.composition.playhead, y: 0}
+                    },
+                    React.createElement('div', { className: 'Timeline-playhead-line'},
+                        React.createElement('div', { className: 'Timeline-playhead-head'})
+                    )
+                )
+            )
+        )
+    }
+}
+
 class Composition extends React.Component {
     constructor() {
         super();
 
         this.state = {
-            isDragging: false
+            currentTime: 0,
+            isDragging: false,
+            isPlaying: false,
         };
 
         this.handleDragOver = this.handleDragOver.bind(this);
         this.handleDragEnter = this.handleDragEnter.bind(this);
         this.handleDragLeave = this.handleDragLeave.bind(this);
         this.handleDrop = this.handleDrop.bind(this);
+    }
+
+    componentDidMount() {
+        Mousetrap.bind('space', this.playPause.bind(this));
+    }
+
+    playPause() {
+        this.setState({ isPlaying: !this.state.isPlaying }, () => {
+            this.animationFrameTimestamp = performance.now();
+            this.renderNextFrame();
+        });
+    }
+
+    renderNextFrame() {
+        if (this.state.isPlaying) {
+            // do stuff
+            const timeOffset = performance.now() - this.animationFrameTimestamp;
+            const currentTime = this.state.currentTime + timeOffset;
+            if (currentTime >= this.props.duration) {
+                this.setState({
+                    currentTime: this.props.duration,
+                    isPlaying: false,
+                });
+            } else {
+                this.animationFrameTimestamp = performance.now();
+                this.setState({ currentTime });
+                requestAnimationFrame(this.renderNextFrame.bind(this));
+            }
+        }
+    }
+
+    get playhead() {
+        return this.state.currentTime / this.props.zoom;
+    }
+
+    set currentTime(currentTime) {
+        this.setState({ currentTime });
     }
 
     handleDragEnter() {
@@ -120,7 +215,7 @@ class Composition extends React.Component {
     }
 
     render() {
-        const { zoom } = this.props.zoom;
+        const { zoom } = this.props;
 
         const videoTracks = {
             1: { clips: [], zoom, key: 'video1' }
@@ -175,6 +270,7 @@ class Composition extends React.Component {
                 onDragLeave: this.handleDragLeave,
                 onDrop: this.handleDrop,
             },
+            React.createElement(CompPlayhead, { composition: this }),
             tracks
         );
     }
@@ -205,14 +301,3 @@ class WrapProvider extends React.Component {
 }
 
 module.exports = WrapProvider;
-
-// const exampleClip = {
-//     src: 'path/to/media',
-//     tracks: {
-//         video: 2,
-//         audio: 1
-//     },
-//     startAt: 12341234,
-//     clipStart: 231412423,
-//     clipEnd: 12312341,
-// };

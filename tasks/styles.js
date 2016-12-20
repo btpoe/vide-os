@@ -15,7 +15,13 @@ module.exports.build = () => {
         } else {
             console.log(`styles compiled, duration: ${result.stats.duration}`);
             // browserSync.stream({ match: '**/*.css' });
-            fs.writeFile('app/styles/app.css', result.css);
+            fs.writeFile('app/styles/app.css', result.css, (e, s) => {
+                if (e) {
+                    console.error(e);
+                } else if (s) {
+                    console.log(s);
+                }
+            });
             // postcss([autoprefixer, cssnano])
             //     .process(result.css)
             //     .then(res => {

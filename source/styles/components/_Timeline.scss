@@ -3,18 +3,6 @@
     overflow: auto;
     width: 100%;
 
-    &::-webkit-scrollbar {
-        width: 5px;
-    }
-
-    &::-webkit-scrollbar-track {
-        background: #ddd;
-    }
-
-    &::-webkit-scrollbar-thumb {
-        background: #666;
-    }
-
     &-clip {
 
         &--video {
@@ -29,7 +17,32 @@
         display: flex;
         flex-direction: column;
         justify-content: center;
+        margin: 0 10px;
         min-height: 100%;
+        position: relative;
+    }
+
+    &-playhead {
+        background: red;
+        height: 20px;
+        margin-bottom: auto;
+
+        &-head {
+            border: 10px solid transparent;
+            border-bottom: 0;
+            border-top: 20px solid blue;
+            margin: 0 -10px 0 -11px;
+            width: 21px;
+        }
+
+        &-line {
+            border-left: 1px solid;
+            bottom: 0;
+            left: 0;
+            position: absolute;
+            top: 0;
+            z-index: 10;
+        }
     }
 
     &-track {
@@ -49,17 +62,9 @@
         &--video {
             height: 70px;
         }
-    }
 
-    &-playhead {
-
-    }
-
-    &-needle {
-        border-left: 1px solid rgba(#fff, 0.9);
-        bottom: 0;
-        left: calc(50% - 0.5px);
-        position: absolute;
-        top: 10px;
+        &:last-child {
+            margin-bottom: auto;
+        }
     }
 }

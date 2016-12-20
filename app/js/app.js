@@ -7,60 +7,81 @@ const Timeline = require('./components/timeline');
 const Tools = require('./components/tools');
 
 const layout = new GoldenLayout({
-    settings:{
+    settings: {
         showPopoutIcon: false
     },
-    content: [{
-        type: 'column',
-        content: [{
-            type: 'row',
-            content: [{
-                type: 'react-component',
-                component: 'Media',
-                title: 'Media',
-                props: {},
-            }, {
-                type: 'stack',
-                content: [{
-                    type: 'react-component',
-                    component: 'Effects',
-                    title: 'Effects',
-                    props: {},
-                }, {
-                    type: 'react-component',
-                    component: 'EffectControls',
-                    title: 'EffectControls',
-                    props: {},
-                }]
-            }, {
-                type: 'react-component',
-                component: 'Preview',
-                title: 'Preview',
-                props: {},
-            }]
-        }, {
-            type: 'row',
-            content: [{
-                type: 'react-component',
-                component: 'Tools',
-                title: 'Tools',
-                props: {},
-                width: 10
-            }, {
-                type: 'react-component',
-                component: 'Timeline',
-                title: 'Timeline',
-                props: {},
-                width: 80
-            }, {
-                type: 'react-component',
-                component: 'AudioMeter',
-                title: 'AudioMeter',
-                props: {},
-                width: 10
-            }]
-        }]
-    }]
+    content: [
+        {
+            type: 'column',
+            content: [
+                {
+                    type: 'row',
+                    height: 55,
+                    content: [
+                        {
+                            type: 'react-component',
+                            component: 'Media',
+                            title: 'Media',
+                            props: {},
+                            width: 27
+                        },
+                        {
+                            type: 'stack',
+                            width: 28,
+                            content: [
+                                {
+                                    type: 'react-component',
+                                    component: 'Effects',
+                                    title: 'Effects',
+                                    props: {},
+                                },
+                                {
+                                    type: 'react-component',
+                                    component: 'EffectControls',
+                                    title: 'EffectControls',
+                                    props: {},
+                                }
+                            ]
+                        },
+                        {
+                            type: 'react-component',
+                            component: 'Preview',
+                            title: 'Preview',
+                            props: {},
+                            width: 45
+                        }
+                    ]
+                },
+                {
+                    type: 'row',
+                    height: 45,
+                    content: [
+                        {
+                            type: 'react-component',
+                            component: 'Tools',
+                            title: 'Tools',
+                            props: {},
+                            width: 8
+                        },
+                        {
+                            type: 'react-component',
+                            component: 'Timeline',
+                            title: 'Timeline',
+                            props: {},
+                            width: 84
+                        },
+                        {
+                            type: 'react-component',
+                            component: 'AudioMeter',
+                            title: 'AudioMeter',
+                            props: {},
+                            width: 8
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
 }, document.getElementById('AppRoot'));
 
 layout.registerComponent('AudioMeter', AudioMeter);

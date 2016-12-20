@@ -5,7 +5,7 @@ const initialComposition = {
     clips: [],
     frameRate: 30,
     duration: 10000,
-    zoom: 1
+    zoom: 15
 };
 
 function clips(state = [], action) {
