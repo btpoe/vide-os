@@ -1,5 +1,5 @@
 const { combineReducers } = require('redux');
-const { ADD_CLIP } = require('./action-types');
+const { ADD_CLIP, UPDATE_CLIP } = require('./action-types');
 
 const initialComposition = {
     clips: [],
@@ -12,6 +12,10 @@ function clips(state = [], action) {
     switch (action.type) {
         case ADD_CLIP:
             return state.slice().concat([action.clip]);
+        case UPDATE_CLIP:
+            state = state.slice();
+            state[action.clipId] = Object.assign({}, state[action.clipId], action.clipData);
+            return state;
         default:
             return state;
     }
@@ -22,6 +26,9 @@ function composition(state = initialComposition, action) {
         case ADD_CLIP:
             state = Object.assign({}, state, { clips: clips(state.clips, action) });
             state.duration += action.clip.duration;
+            return state;
+        case UPDATE_CLIP:
+            state = Object.assign({}, state, { clips: clips(state.clips, action) });
             return state;
         default:
             return state;

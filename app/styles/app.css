@@ -111,11 +111,16 @@ img {
   height: 100%;
   overflow: auto;
   width: 100%; }
-  .Timeline-clip--video {
-    background: #31a5bc;
-    border: 1px solid;
-    border-color: rgba(218, 232, 228, 0.41) rgba(54, 78, 71, 0.36) rgba(54, 78, 71, 0.36) rgba(218, 232, 228, 0.41);
-    padding: 8px; }
+  .Timeline-clip {
+    bottom: 0;
+    left: 0;
+    position: absolute;
+    top: 0; }
+    .Timeline-clip--video {
+      background: #31a5bc;
+      border: 1px solid;
+      border-color: rgba(218, 232, 228, 0.41) rgba(54, 78, 71, 0.36) rgba(54, 78, 71, 0.36) rgba(218, 232, 228, 0.41);
+      padding: 8px; }
   .Timeline-composition {
     display: flex;
     flex-direction: column;
@@ -143,7 +148,7 @@ img {
   .Timeline-track {
     border-top: 1px solid #333;
     border-bottom: 1px solid #111;
-    display: flex; }
+    position: relative; }
     .Timeline-track--audio {
       height: 55px; }
       .Timeline-track--video + .Timeline-track--audio {

@@ -6,6 +6,8 @@ const Preview = require('./components/preview');
 const Timeline = require('./components/timeline');
 const Tools = require('./components/tools');
 
+global.eventHub = document.createElement('div');
+
 const layout = new GoldenLayout({
     settings: {
         showPopoutIcon: false

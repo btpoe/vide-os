@@ -75,7 +75,6 @@ class Entry extends React.Component {
     }
 
     setSelected(e) {
-        console.log(e.nativeEvent);
         if (e.keyCode === 13) {
             this.openEntry();
         }
