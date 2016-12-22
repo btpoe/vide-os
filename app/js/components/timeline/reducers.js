@@ -24,11 +24,9 @@ function clips(state = [], action) {
 function composition(state = initialComposition, action) {
     switch (action.type) {
         case ADD_CLIP:
-            state = Object.assign({}, state, { clips: clips(state.clips, action) });
-            state.duration += action.clip.duration;
-            return state;
         case UPDATE_CLIP:
             state = Object.assign({}, state, { clips: clips(state.clips, action) });
+            state.duration = _(state.clips).map(clip => clip.compositionStart + clip.duration).max() + 1000;
             return state;
         default:
             return state;

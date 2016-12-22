@@ -96,6 +96,10 @@ class Composition extends React.Component {
         });
     }
 
+    getTimestamp(pageX) {
+        return (pageX + this.parentNode.scrollLeft - this.parentNode.offsetLeft - 10) * this.props.zoom;
+    }
+
     handleDragEnter() {
         this.setState({isDragging: true});
     }
@@ -114,7 +118,7 @@ class Composition extends React.Component {
     handleDrop(e) {
         e.stopPropagation();
 
-        const compositionStart = (e.pageX + this.parentNode.scrollLeft - this.parentNode.offsetLeft) * this.props.zoom;
+        const compositionStart = this.getTimestamp(e.pageX);
 
         const src = e.dataTransfer.getData('text/plain');
         const videoNode = document.createElement('video');
@@ -126,6 +130,8 @@ class Composition extends React.Component {
                     video: 1,
                     audio: 1
                 },
+                width: videoNode.naturalWidth,
+                height: videoNode.naturalHeight,
                 compositionStart,
                 clipStart: 0,
                 duration: videoNode.duration * 1000

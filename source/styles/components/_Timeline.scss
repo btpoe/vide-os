@@ -27,9 +27,12 @@
     }
 
     &-playhead {
-        background: red;
-        height: 20px;
         margin-bottom: auto;
+
+        &-bar {
+            background: red;
+            height: 20px;
+        }
 
         &-head {
             border: 10px solid transparent;

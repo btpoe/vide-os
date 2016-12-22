@@ -32,7 +32,7 @@ module.exports = class extends React.Component {
     }
 
     onSeeked(clip) {
-        this.previewContext.drawImage(clip.videoNode, 0, 0);
+        this.previewContext.drawImage(clip.videoNode, 0, 0, 1280, 720);
     }
 
     componentDidMount() {

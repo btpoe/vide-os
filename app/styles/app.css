@@ -129,9 +129,10 @@ img {
     min-height: 100%;
     position: relative; }
   .Timeline-playhead {
-    background: red;
-    height: 20px;
     margin-bottom: auto; }
+    .Timeline-playhead-bar {
+      background: red;
+      height: 20px; }
     .Timeline-playhead-head {
       border: 10px solid transparent;
       border-bottom: 0;
