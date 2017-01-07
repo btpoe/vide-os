@@ -1,0 +1,6 @@
+{
+  "export": "artboards",
+  "src": "source/icons/icons.sketch",
+  "output": "app/img/icons",
+  "format": "svg"
+}

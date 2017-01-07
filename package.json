@@ -10,9 +10,10 @@
   "devDependencies": {
     "autoprefixer": "^6.5.3",
     "browser-sync": "^2.17.5",
-    "cssnano": "^3.8.0",
     "node-sass": "^3.11.2",
     "node-watch": "^0.4.1",
-    "postcss": "^5.2.5"
+    "postcss": "^5.2.5",
+    "svgo": "^0.7.1",
+    "yargs": "^6.6.0"
   }
 }

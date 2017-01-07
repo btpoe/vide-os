@@ -1,6 +1,7 @@
 const Draggable = require('react-draggable');
 const { updateClip } = require('./actions');
 const { same } = require('../../utils');
+const ClipTrim = require('./ClipTrim');
 const THUMB_SIZE = 50;
 
 module.exports = class VideoClip extends React.Component {
@@ -41,7 +42,9 @@ module.exports = class VideoClip extends React.Component {
                         width: `${this.props.duration / this.props.zoom}px`,
                     }
                 },
-                React.createElement('video', { ref: 'srcVideo', src: this.props.src, height: THUMB_SIZE })
+                React.createElement('video', { ref: 'srcVideo', src: this.props.src, height: THUMB_SIZE }),
+                React.createElement(ClipTrim, { type: 'start' }),
+                React.createElement(ClipTrim, { type: 'end' })
             )
         );
     }

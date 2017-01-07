@@ -1,24 +1,26 @@
 // const browserSync = require('browser-sync');
 const watch = require('node-watch');
 const styles = require('./tasks/styles');
-// const rollup = require('rollup');
-// const rollupWatch = require('rollup-watch');
-// const rollupConfig = require('./rollup.config');
+const icons = require('./tasks/icons');
+const argv = require('yargs')
+    .array('only')
+    .default('only', ['all'])
+    .argv;
 
-// browserSync.init({
-//     server: 'build',
-//     reloadDebounce: 2000,
-//     open: false,
-//     ghostMode: false
-// });
+const run = key => argv.only.includes('all') || argv.only.includes(key);
 
-// const watcher = rollupWatch(rollup, rollupConfig);
-// watcher.on('event', event => {
-//     if (event.code === 'BUILD_END') {
-//         console.log(`scripts compiled, duration: ${event.duration}`);
-//         browserSync.reload();
-//     }
-// });
+if (run('icons')) {
+    icons.build();
 
-watch('source/styles').on('change', styles.build);
-styles.build();
+    if (argv.watch) {
+        watch('source/icons').on('change', icons.build);
+    }
+}
+
+if (run('styles')) {
+    styles.build();
+
+    if (argv.watch) {
+        watch('source/styles').on('change', styles.build);
+    }
+}
