@@ -10,7 +10,7 @@ module.exports = class extends React.Component {
     onTimelineProgress(e) {
         const comp = e.detail.composition;
         const clips = comp.props.clips;
-        const clip = clips.filter(clip => comp.state.currentTime > clip.compositionStart && comp.state.currentTime < clip.compositionStart + clip.duration)[0];
+        const clip = clips.filter(clip => comp.state.currentTime > clip.compositionStart && comp.state.currentTime < clip.compositionStart + (clip.clipEnd - clip.clipStart))[0];
         if (clip) {
             if (!clip.videoNode[seeking]) {
                 clip.videoNode.currentTime = (clip.clipStart + comp.state.currentTime - clip.compositionStart) / 1000;

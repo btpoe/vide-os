@@ -4,41 +4,10 @@ const { Provider, connect } = require('react-redux');
 const { addClip } = require('./timeline/actions');
 const reducer = require('./timeline/reducers');
 const VideoTrack = require('./timeline/VideoTrack');
+const AudioTrack = require('./timeline/AudioTrack');
 const Playhead = require('./timeline/Playhead');
 
 const store = global.store = createStore(reducer);
-
-class AudioClip extends React.Component {
-    render() {
-        return React.createElement(
-            'div',
-            {
-                className: 'Timeline-clip Timeline-clip--audio',
-                style: {
-                    width: `${this.props.duration/this.props.zoom}px`,
-                    transform: `translateX(${this.props.compositionStart/this.props.zoom}px)`
-                }
-            },
-            'aud clip'
-        );
-    }
-}
-
-class AudioTrack extends React.Component {
-    render() {
-        const clips = this.props.clips.map((clip, i) =>
-            React.createElement(AudioClip, Object.assign(clip, { zoom: this.props.zoom, key: i }))
-        );
-
-        return React.createElement(
-            'div',
-            {
-                className: 'Timeline-track Timeline-track--audio'
-            },
-            clips
-        );
-    }
-}
 
 class Composition extends React.Component {
     constructor() {
@@ -134,7 +103,8 @@ class Composition extends React.Component {
                 height: videoNode.naturalHeight,
                 compositionStart,
                 clipStart: 0,
-                duration: videoNode.duration * 1000
+                clipEnd: videoNode.duration * 1000,
+                duration: videoNode.duration * 1000,
             }));
         });
 

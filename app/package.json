@@ -23,6 +23,7 @@
     "react-dom": "^15.3.2",
     "react-draggable": "^2.2.3",
     "react-redux": "^4.4.6",
-    "redux": "^3.6.0"
+    "redux": "^3.6.0",
+    "tone": "^0.11.11"
   }
 }

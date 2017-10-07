@@ -11,5 +11,5 @@ module.exports = props => {
             className: 'Timeline-track Timeline-track--video'
         },
         clips
-    );
+    )
 };

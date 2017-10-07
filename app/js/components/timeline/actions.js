@@ -1,4 +1,4 @@
-const { ADD_CLIP, UPDATE_CLIP } = require('./action-types');
+const { ADD_CLIP, TRIM_CLIP, UPDATE_CLIP } = require('./action-types');
 
 function addClip(clip) {
     return {
@@ -15,4 +15,11 @@ function updateClip(clipId, clipData) {
     }
 }
 
-module.exports = { addClip, updateClip };
+function trimClip(clipId, side, timestamp) {
+    return {
+        type: TRIM_CLIP,
+        clipId, side, timestamp
+    }
+}
+
+module.exports = { addClip, updateClip, trimClip };
