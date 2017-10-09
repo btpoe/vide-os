@@ -11,6 +11,10 @@
     top: 0;
 }
 
+.Timeline-clip--audio {
+    overflow: hidden;
+}
+
 .Timeline-clip--video {
     background: #31a5bc;
     border: 1px solid;
@@ -26,12 +30,12 @@
 }
 
 .Timeline-clipTrim--end {
-    cursor: url(../img/icons/align-right.svg) 9 9, pointer;
+    cursor: url(../../img/icons/align-right.svg) 9 9, pointer;
     right: 100%;
 }
 
 .Timeline-clipTrim--start {
-    cursor: url(../img/icons/align-left.svg), pointer;
+    cursor: url(../../img/icons/align-left.svg), pointer;
     left: 0;
 }
 
@@ -49,14 +53,14 @@
 }
 
 .Timeline-playhead-bar {
-    background: red;
+    background: #555;
     height: 20px;
 }
 
 .Timeline-playhead-head {
     border: 10px solid transparent;
     border-bottom: 0;
-    border-top: 20px solid blue;
+    border-top: 20px solid #ddd;
     margin: 0 -10px 0 -11px;
     width: 21px;
 }

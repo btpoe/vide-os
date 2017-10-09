@@ -1,4 +1,5 @@
 const Draggable = require('react-draggable');
+const Tone = require('tone');
 
 module.exports = class Playhead extends React.Component {
     constructor() {
@@ -13,11 +14,15 @@ module.exports = class Playhead extends React.Component {
     }
 
     handleDrag(e, data) {
-        this.props.composition.currentTime = data.x * this.props.composition.props.zoom;
+        const currentTime = data.x * this.props.composition.props.zoom;
+        this.props.composition.currentTime = currentTime;
+        Tone.Transport.seconds = currentTime / 1000;
     }
 
     handleBarClick(e) {
-        this.props.composition.currentTime = this.props.composition.getTimestamp(e.pageX);
+        const currentTime = this.props.composition.getTimestamp(e.pageX);
+        this.props.composition.currentTime = currentTime;
+        Tone.Transport.seconds = currentTime / 1000;
         const event = Object.assign({}, e.nativeEvent);
         const context = this.refs.draggable._reactInternalInstance._renderedComponent._instance;
         event.target = event.srcElement = event.toElement = this.refs.head;

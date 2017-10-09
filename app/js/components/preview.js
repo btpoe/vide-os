@@ -36,7 +36,7 @@ module.exports = class extends React.Component {
     }
 
     componentDidMount() {
-        this.previewContext = this.refs.preview.getContext('2d');
+        this.previewContext = this.canvasNode.getContext('2d');
         global.eventHub.addEventListener('timelineProgress', this.onTimelineProgress);
     }
 
@@ -45,8 +45,27 @@ module.exports = class extends React.Component {
     }
 
     render() {
-        return React.createElement('div', { style: { position: 'relative', paddingBottom: '56.25%', height: 0, backgroundColor: '#000' } },
-            React.createElement('canvas', { ref: 'preview', width: 1280, height: 720, style: { position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' } })
+        return (
+            React.createElement(
+                'div',
+                {
+                    className: 'Preview'
+                },
+                React.createElement(
+                    'div',
+                    {
+                        className: 'Preview-viewport'
+                    },
+                    React.createElement(
+                        'canvas',
+                        {
+                            ref: (n) => { this.canvasNode = n; },
+                            width: 1280,
+                            height: 720,
+                        }
+                    )
+                )
+            )
         );
     }
 };

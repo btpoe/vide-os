@@ -1,4 +1,5 @@
 const Mousetrap = require('mousetrap');
+const Tone = require('tone');
 const { createStore } = require('redux');
 const { Provider, connect } = require('react-redux');
 const { addClip } = require('./timeline/actions');
@@ -32,6 +33,7 @@ class Composition extends React.Component {
 
     playPause() {
         this.setState({ isPlaying: !this.state.isPlaying }, () => {
+            Tone.Transport[this.state.isPlaying ? 'start' : 'pause']();
             this.animationFrameTimestamp = performance.now();
             this.renderNextFrame();
         });
