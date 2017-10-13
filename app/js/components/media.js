@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const isWindows = process.platform === 'win32';
-const getHome = isWindows ? process.env.USERPROFILE: process.env.HOME;
+const getHome = (isWindows ? process.env.USERPROFILE: process.env.HOME) + '/Movies/Montreal';
 
 const FILE_IMG = 'img/file.svg';
 const FOLDER_IMG = 'img/folder.svg';

@@ -1,25 +1,25 @@
-const { ADD_CLIP, TRIM_CLIP, UPDATE_CLIP } = require('./action-types');
+const { ADD_CLIP, UPDATE_CLIP } = require('./action-types');
 
-function addClip(clip) {
+function addClip({ trackIdentity, src, start }) {
     return {
         type: ADD_CLIP,
-        clip
+        trackIdentity, src, start
     }
 }
 
-function updateClip(clipId, clipData) {
-    return {
+function updateClip(identity, payload) {
+    const action = {
         type: UPDATE_CLIP,
-        clipId,
-        clipData
-    }
+        identity
+    };
+
+    ['start', 'offest', 'duration', 'end'].forEach(prop => {
+        if (payload.hasOwnProperty(prop)) {
+            action[prop] = payload[prop]
+        }
+    });
+
+    return action;
 }
 
-function trimClip(clipId, side, timestamp) {
-    return {
-        type: TRIM_CLIP,
-        clipId, side, timestamp
-    }
-}
-
-module.exports = { addClip, updateClip, trimClip };
+module.exports = { addClip, updateClip };

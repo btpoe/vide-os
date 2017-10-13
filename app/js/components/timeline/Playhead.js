@@ -14,18 +14,18 @@ module.exports = class Playhead extends React.Component {
     }
 
     handleDrag(e, data) {
-        const currentTime = data.x * this.props.composition.props.zoom;
-        this.props.composition.currentTime = currentTime;
+        const currentTime = data.x * this.props.sequence.state.zoom;
+        this.props.sequence.currentTime = currentTime;
         Tone.Transport.seconds = currentTime / 1000;
     }
 
     handleBarClick(e) {
-        const currentTime = this.props.composition.getTimestamp(e.pageX);
-        this.props.composition.currentTime = currentTime;
+        const currentTime = this.props.sequence.getTimestamp(e.pageX);
+        this.props.sequence.currentTime = currentTime;
         Tone.Transport.seconds = currentTime / 1000;
         const event = Object.assign({}, e.nativeEvent);
-        const context = this.refs.draggable._reactInternalInstance._renderedComponent._instance;
-        event.target = event.srcElement = event.toElement = this.refs.head;
+        const context = this.draggableComponent._reactInternalFiber.child.stateNode;
+        event.target = event.srcElement = event.toElement = this.headNode;
         context.handleDragStart.call(context, event);
     }
 
@@ -39,11 +39,11 @@ module.exports = class Playhead extends React.Component {
                         bounds: 'parent',
                         handle: '.Timeline-playhead-head',
                         onDrag: this.handleDrag,
-                        position: {x: this.props.composition.playhead, y: 0},
-                        ref: 'draggable'
+                        position: {x: this.props.sequence.playhead, y: 0},
+                        ref: (n) => { this.draggableComponent = n; }
                     },
                     React.createElement('div', { className: 'Timeline-playhead-line'},
-                        React.createElement('div', { className: 'Timeline-playhead-head', ref: 'head' })
+                        React.createElement('div', { className: 'Timeline-playhead-head', ref: (n) => { this.headNode = n; } })
                     )
                 )
             )

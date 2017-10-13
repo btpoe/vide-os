@@ -1,42 +1,34 @@
 const Tone = require('tone');
 const drawWave = require('draw-wave');
 const debounce = require('lodash.debounce');
-
-function getDuration(props) {
-    return props.clipEnd - props.clipStart;
-}
+const { updateClip } = require('./actions');
 
 module.exports = class AudioClip extends React.Component {
-    constructor(props) {
-        super(props);
-
-        this.setStart = debounce((compStart, clipStart, duration) => {
-            console.log(duration);
-            this.player.unsync().sync().start(compStart / 1000, clipStart / 1000, duration / 1000);
-        }, 250);
-    }
     componentDidMount() {
-        this.player = new Tone.Player(this.props.src, () => {
-            const waveSVG = drawWave.svg(this.player.buffer, 500, 300, '#52F6A4');
-            this.rootNode.appendChild(waveSVG);
-        }).toMaster();
-
-        this.setStart(this.props.compositionStart, this.props.clipStart, getDuration(this.props));
+        fs.readFile(this.props.src, audioData => {
+            Tone.context.decodeAudioData(audioData).then((buffer) => {
+                this.rootNode.appendChild(drawWave.svg(buffer, 500, 300, '#52F6A4'));
+            });
+        });
     }
 
     componentWillReceiveProps(nextProps) {
         if (this.shouldUpdateAudioStart(nextProps)) {
-            this.setStart(nextProps.compositionStart, nextProps.clipStart, getDuration(nextProps));
+            global.store.dispatch(updateClip(this.props.identity, {
+                start: nextProps.start,
+                offset: nextProps.offset,
+                duration: nextProps.duration,
+            }));
         }
     }
 
     shouldUpdateAudioStart(nextProps) {
         return (
-            nextProps.compositionStart !== this.props.compositionStart
+            nextProps.start !== this.props.start
             ||
-            nextProps.clipStart !== this.props.clipStart
+            nextProps.offset !== this.props.offset
             ||
-            nextProps.clipEnd !== this.props.clipEnd
+            nextProps.duration !== this.props.duration
         );
     }
 
@@ -50,8 +42,8 @@ module.exports = class AudioClip extends React.Component {
             {
                 className: 'Timeline-clip Timeline-clip--audio',
                 style: {
-                    width: `${getDuration(this.props)/this.props.zoom}px`,
-                    transform: `translateX(${this.props.compositionStart/this.props.zoom}px)`
+                    width: `${this.props.duration/this.props.zoom}px`,
+                    transform: `translateX(${this.props.start/this.props.zoom}px)`
                 }
             },
             React.createElement(
@@ -62,7 +54,7 @@ module.exports = class AudioClip extends React.Component {
                     viewBox: '0 0 500 300',
                     style: {
                         height: '100%',
-                        marginLeft: `${-this.props.clipStart/this.props.zoom}px`,
+                        marginLeft: `${-this.props.offset/this.props.zoom}px`,
                         width: `${this.props.duration/this.props.zoom}px`,
                     }
                 }

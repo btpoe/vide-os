@@ -8,19 +8,18 @@ module.exports = class extends React.Component {
     }
 
     onTimelineProgress(e) {
-        const comp = e.detail.composition;
-        const clips = comp.props.clips;
-        const clip = clips.filter(clip => comp.state.currentTime > clip.compositionStart && comp.state.currentTime < clip.compositionStart + (clip.clipEnd - clip.clipStart))[0];
+        const comp = e.detail.sequence;
+        const clip = global.rootSequence.videoTracks[0].findClipAtTime(comp.state.currentTime);
         if (clip) {
-            if (!clip.videoNode[seeking]) {
-                clip.videoNode.currentTime = (clip.clipStart + comp.state.currentTime - clip.compositionStart) / 1000;
-                clip.videoNode[seeking] = true;
+            if (!clip.player[seeking]) {
+                clip.player.currentTime = (clip.offset + comp.state.currentTime - clip.start) / 1000;
+                clip.player[seeking] = true;
                 const onSeeked = () => {
-                    clip.videoNode[seeking] = false;
+                    clip.player[seeking] = false;
                     this.onSeeked(clip);
-                    clip.videoNode.removeEventListener('seeked', onSeeked);
+                    clip.player.removeEventListener('seeked', onSeeked);
                 };
-                clip.videoNode.addEventListener('seeked', onSeeked);
+                clip.player.addEventListener('seeked', onSeeked);
             }
         } else {
             const ctx = this.previewContext;
@@ -32,7 +31,7 @@ module.exports = class extends React.Component {
     }
 
     onSeeked(clip) {
-        this.previewContext.drawImage(clip.videoNode, 0, 0, 1280, 720);
+        this.previewContext.drawImage(clip.player, 0, 0, 1280, 720);
     }
 
     componentDidMount() {

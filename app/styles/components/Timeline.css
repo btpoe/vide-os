@@ -39,7 +39,7 @@
     left: 0;
 }
 
-.Timeline-composition {
+.Timeline-sequence {
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -95,4 +95,8 @@
 
 .Timeline-track:last-child {
     margin-bottom: auto;
+}
+
+.Timeline-track.is-dragging {
+    box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.2);
 }

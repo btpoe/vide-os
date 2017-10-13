@@ -1,49 +1,41 @@
 const { combineReducers } = require('redux');
-const { ADD_CLIP, TRIM_CLIP, UPDATE_CLIP } = require('./action-types');
+const { ADD_CLIP, UPDATE_CLIP } = require('./action-types');
+const Sequence = require('../../classes/Sequence');
 
-const initialComposition = {
-    clips: [],
-    frameRate: 30,
-    duration: 10000,
-    zoom: 15
-};
+const sequence = global.rootSequence = new Sequence();
 
-function clips(state = [], action) {
+function clipActions(action) {
     switch (action.type) {
         case ADD_CLIP:
-            return state.slice().concat([action.clip]);
-        case TRIM_CLIP:
-            state = state.slice();
-            const clip = state[action.clipId] = Object.assign({}, state[action.clipId]);
-            if (action.side === 'start') {
-                clip.compositionStart = clip.compositionStart + (action.timestamp - clip.clipStart);
-                clip.clipStart = action.timestamp;
-            } else {
-                clip.clipEnd = action.timestamp;
-            }
-            return state;
+            const addedClip = sequence.getElementById(action.trackIdentity).addClipAtTime(action.src, action.start);
+            addedClip.loaded.then(() => {
+                global.store.dispatch({ type: null });
+            });
+            break;
         case UPDATE_CLIP:
-            state = state.slice();
-            state[action.clipId] = Object.assign({}, state[action.clipId], action.clipData);
-            return state;
+            const updatedClip = sequence.getElementById(action.identity);
+            ['start', 'offest', 'duration', 'end'].forEach(prop => {
+                if (action.hasOwnProperty(prop)) {
+                    updatedClip[prop] = action[prop]
+                }
+            });
+            break;
         default:
-            return state;
-    }
-}
-
-function composition(state = initialComposition, action) {
-    switch (action.type) {
-        case ADD_CLIP:
-        case TRIM_CLIP:
-        case UPDATE_CLIP:
-            state = Object.assign({}, state, { clips: clips(state.clips, action) });
-            state.duration = _(state.clips).map(clip => clip.compositionStart + (clip.clipEnd - clip.clipStart)).max() + 1000;
-            return state;
-        default:
-            return state;
+            break;
     }
 }
 
 module.exports = combineReducers({
-    composition
+    sequence: (state, action) => {
+        switch (action.type) {
+            case ADD_CLIP:
+            case UPDATE_CLIP:
+                clipActions(action);
+                break;
+            default:
+                break;
+        }
+
+        return sequence.toState();
+    }
 });
