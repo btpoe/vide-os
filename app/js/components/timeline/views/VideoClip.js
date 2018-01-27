@@ -1,7 +1,7 @@
 const Draggable = require('react-draggable');
-const { updateClip } = require('./actions');
-const cursor = require('../../services/cursor');
-const { same } = require('../../utils');
+const { updateClip } = require('../actions');
+const cursor = require('../../../services/cursor');
+const { same } = require('../../../utils');
 // const ClipTrim = require('./ClipTrim');
 const THUMB_SIZE = 50;
 

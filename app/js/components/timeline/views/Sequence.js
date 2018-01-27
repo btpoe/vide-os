@@ -3,7 +3,7 @@ const Tone = require('tone');
 const VideoTrack = require('./VideoTrack');
 const AudioTrack = require('./AudioTrack');
 const Playhead = require('./Playhead');
-const cursor = require('../../services/cursor');
+const cursor = require('../../../services/cursor');
 
 module.exports = class Sequence extends React.Component {
     constructor() {
@@ -18,6 +18,7 @@ module.exports = class Sequence extends React.Component {
         cursor.listener = this;
 
         this.getTimestamp = this.getTimestamp.bind(this);
+        this.renderNextFrame = this.renderNextFrame.bind(this);
     }
 
     componentDidMount() {
@@ -41,16 +42,11 @@ module.exports = class Sequence extends React.Component {
 
     renderNextFrame() {
         if (this.state.isPlaying) {
-            // do stuff
-            const timeOffset = performance.now() - this.animationFrameTimestamp;
-            const currentTime = this.state.currentTime + timeOffset;
-            if (currentTime >= this.props.duration) {
-                this.currentTime = this.props.duration;
+            const currentTime = this.currentTime = Math.min(this.currentTime + Math.round(1000 / this.props.fps), this.props.duration);
+            if (currentTime === this.props.duration) {
                 this.setState({ isPlaying: false });
             } else {
-                this.animationFrameTimestamp = performance.now();
-                this.currentTime = currentTime;
-                requestAnimationFrame(this.renderNextFrame.bind(this));
+                setTimeout(this.renderNextFrame, Math.round(1000 / this.props.fps));
             }
         }
     }
@@ -61,6 +57,10 @@ module.exports = class Sequence extends React.Component {
 
     get playhead() {
         return this.state.currentTime / this.state.zoom;
+    }
+
+    get currentTime() {
+        return this.state.currentTime;
     }
 
     set currentTime(currentTime) {

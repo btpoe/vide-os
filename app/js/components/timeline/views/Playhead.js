@@ -23,9 +23,11 @@ module.exports = class Playhead extends React.Component {
         const currentTime = this.props.sequence.getTimestamp(e.pageX);
         this.props.sequence.currentTime = currentTime;
         Tone.Transport.seconds = currentTime / 1000;
+
         const event = Object.assign({}, e.nativeEvent);
-        const context = this.draggableComponent._reactInternalFiber.child.stateNode;
         event.target = event.srcElement = event.toElement = this.headNode;
+
+        const context = this.draggableComponent._reactInternalFiber.child.stateNode;
         context.handleDragStart.call(context, event);
     }
 

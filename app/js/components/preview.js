@@ -4,34 +4,47 @@ module.exports = class extends React.Component {
     constructor() {
         super();
 
+        this.frameQueue = {};
+        this.gcFrameQueueRate = 120;
+
         this.onTimelineProgress = this.onTimelineProgress.bind(this);
     }
 
     onTimelineProgress(e) {
         const comp = e.detail.sequence;
-        const clip = global.rootSequence.videoTracks[0].findClipAtTime(comp.state.currentTime);
-        if (clip) {
-            if (!clip.player[seeking]) {
-                clip.player.currentTime = (clip.offset + comp.state.currentTime - clip.start) / 1000;
-                clip.player[seeking] = true;
-                const onSeeked = () => {
-                    clip.player[seeking] = false;
-                    this.onSeeked(clip);
-                    clip.player.removeEventListener('seeked', onSeeked);
-                };
-                clip.player.addEventListener('seeked', onSeeked);
-            }
-        } else {
-            const ctx = this.previewContext;
-            ctx.beginPath();
-            ctx.rect(0, 0, 1280, 720);
-            ctx.fillStyle = "black";
-            ctx.fill();
+        const time = comp.currentTime;
+        const promise = this.frameQueue[time];
+        if (promise && promise.completed) {
+            promise.then((ctx) => {
+                if (ctx) {
+                    this.previewContext.drawImage(ctx, 0, 0);
+                }
+            })
         }
+        this.fillQueue(time, comp.props.fps);
     }
 
-    onSeeked(clip) {
-        this.previewContext.drawImage(clip.player, 0, 0, 1280, 720);
+    fillQueue(time, fps) {
+        delete this.frameQueue[time];
+        let frameCount = 10;
+        let nextFrame = time;
+        while (frameCount--) {
+            nextFrame += Math.round(1000 / fps);
+            if (!this.frameQueue[nextFrame]) {
+                this.frameQueue[nextFrame] = global.rootSequence.render(nextFrame);
+            }
+        }
+        this.gcFrameQueue(time);
+    }
+
+    gcFrameQueue(time) {
+        if (--this.gcFrameQueueRate) {
+            return;
+        }
+        this.gcFrameQueueRate = 120;
+        Object.keys(this.frameQueue).filter(frame => frame < time).forEach(frame => {
+            delete this.frameQueue[frame];
+        });
     }
 
     componentDidMount() {

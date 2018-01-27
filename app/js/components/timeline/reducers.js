@@ -1,6 +1,7 @@
 const { combineReducers } = require('redux');
 const { ADD_CLIP, UPDATE_CLIP } = require('./action-types');
-const Sequence = require('../../classes/Sequence');
+const Sequence = require('./models/Sequence');
+const Track = require('./models/Track');
 
 const sequence = global.rootSequence = new Sequence();
 

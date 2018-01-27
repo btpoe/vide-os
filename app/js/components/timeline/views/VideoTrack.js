@@ -1,5 +1,5 @@
 const VideoClip = require('./VideoClip');
-const { addClip } = require('./actions');
+const { addClip } = require('../actions');
 
 module.exports = class VideoTrack extends React.Component {
     constructor(props) {

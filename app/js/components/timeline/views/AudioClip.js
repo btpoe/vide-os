@@ -1,14 +1,16 @@
+const fs = require('fs');
 const Tone = require('tone');
 const drawWave = require('draw-wave');
 const debounce = require('lodash.debounce');
-const { updateClip } = require('./actions');
+const { updateClip } = require('../actions');
 
 module.exports = class AudioClip extends React.Component {
     componentDidMount() {
-        fs.readFile(this.props.src, audioData => {
-            Tone.context.decodeAudioData(audioData).then((buffer) => {
+        fs.readFile(this.props.src, (err, audioData) => {
+            if (err) return;
+            Tone.context.decodeAudioData(audioData.buffer).then(buffer => {
                 this.rootNode.appendChild(drawWave.svg(buffer, 500, 300, '#52F6A4'));
-            });
+            })
         });
     }
 

@@ -2,14 +2,14 @@ const Track = require('./Track');
 
 class Sequence {
     constructor() {
-        this.videoTracks = [new Track(this, Track.TYPE_VIDEO)];
-        this.audioTracks = [new Track(this, Track.TYPE_AUDIO)];
+        this.videoTracks = [];
+        this.audioTracks = [];
         this.elements = {};
-        this.frameRate = 30;
+        this.fps = 30;
         this.nextElementIdentity = 0;
 
-        this.registerElement(this.videoTracks[0]);
-        this.registerElement(this.audioTracks[0]);
+        this.newTrack(Track.TYPE_VIDEO);
+        this.newTrack(Track.TYPE_AUDIO);
     }
 
     get duration() {
@@ -44,11 +44,28 @@ class Sequence {
         return this.elements[identity];
     }
 
+    render(time) {
+        const promise = Promise.all(this.videoTracks.map(track => track.render(time)))
+            .then(canvases => {
+                promise.completed = true;
+                canvases = canvases.filter(Boolean);
+                if (!canvases.length) {
+                    return false;
+                }
+                return canvases.reduce((canvas, image) => {
+                    canvas.getContext('2d').drawImage(image, 0, 0, 1280, 720);
+                    return canvas;
+                })
+            });
+
+        return promise;
+    }
+
     save() {
         return {
             videoTracks: this.videoTracks.map(track => track.save()),
             audioTracks: this.audioTracks.map(track => track.save()),
-            frameRate: this.frameRate,
+            fps: this.fps,
             nextIdentity: this.nextIdentity,
         }
     }
@@ -57,7 +74,7 @@ class Sequence {
         return {
             videoTracks: this.videoTracks.map(track => track.toState()),
             audioTracks: this.audioTracks.map(track => track.toState()),
-            frameRate: this.frameRate,
+            fps: this.fps,
             duration: this.duration,
         }
     }
@@ -66,11 +83,11 @@ class Sequence {
 Sequence.load = ({
     videoTracks,
     audioTracks,
-    frameRate,
+    fps,
     nextIdentity
 }) => {
     const sequence = new Sequence();
-    sequence.frameRate = frameRate;
+    sequence.fps = fps;
     sequence.nextIdentity = nextIdentity;
     sequence.videoTracks = videoTracks.map(track => Track.load(track));
     sequence.audioTracks = audioTracks.map(track => Track.load(track));

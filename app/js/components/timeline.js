@@ -1,7 +1,7 @@
 const { createStore } = require('redux');
 const { Provider, connect } = require('react-redux');
 const reducer = require('./timeline/reducers');
-const Sequence = require('./timeline/Sequence');
+const Sequence = require('./timeline/views/Sequence');
 
 const store = global.store = createStore(reducer);
 

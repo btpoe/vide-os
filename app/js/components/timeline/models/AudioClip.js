@@ -9,7 +9,7 @@ class AudioClip extends Clip {
         this.loaded = new Promise((resolve) => {
             this.player = new Tone.Player(src, () => {
                 this.duration = this.player.buffer.duration * 1000;
-                resolve();
+                resolve(this);
             }).toMaster().sync();
             this.player.retrigger = true;
         });

@@ -1,5 +1,5 @@
 const { sortedIndexBy } = require('lodash');
-const { find, indexOf } = require('../utils/binarySearch');
+const { find, indexOf } = require('../../../utils/binarySearch');
 const AudioClip = require('./AudioClip');
 const VideoClip = require('./VideoClip');
 
@@ -26,6 +26,7 @@ function clipInRange(clip, [startTime, endTime]) {
 class Track {
     constructor(parentNode, type) {
         this.parentNode = parentNode;
+        this.type = type;
         this.clips = [];
 
         switch (type) {
@@ -44,6 +45,10 @@ class Track {
 
     get duration() {
         return this.clips.length ? this.clips[this.clips.length - 1].end : 0;
+    }
+
+    get index() {
+        return this.parentNode[`${this.type}Tracks`].indexOf(this);
     }
 
     addClipAtTime(src, start, skipOverlapCheck = false) {
@@ -98,6 +103,19 @@ class Track {
         }
 
         return result;
+    }
+
+    render(time) {
+        return new Promise((resolve) => {
+            if (this.type !== Track.TYPE_VIDEO) {
+                return resolve(false);
+            }
+            const videoClip = this.findClipAtTime(time);
+            if (!videoClip) {
+                return resolve(false);
+            }
+            videoClip.render(time).then(resolve);
+        });
     }
 
     toState() {
