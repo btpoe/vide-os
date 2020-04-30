@@ -16,7 +16,7 @@
   "dependencies": {
     "draw-wave": "^2.0.0",
     "golden-layout": "^1.5.6",
-    "jquery": "^3.1.1",
+    "jquery": "^3.5.0",
     "lodash": "^4.17.4",
     "lodash.debounce": "^4.0.8",
     "mousetrap": "^1.6.0",
