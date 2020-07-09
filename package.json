@@ -4,7 +4,7 @@
   "author": "Brandon Poe <brandonpoe@me.co> (http://brandonpoe.com)",
   "license": "MIT",
   "dependencies": {
-    "lodash": "^4.17.4"
+    "lodash": "^4.17.13"
   },
   "sourceType": "module",
   "devDependencies": {
