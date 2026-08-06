@@ -17,15 +17,19 @@ import {
   setProjectState,
   initProjectPersistence,
 } from "./stores/project-store";
-import { undo, redo } from "./stores/history-store";
-import {
-  timelineState,
-  clearSelection,
-  selectAllClips,
-  initTimelinePersistence,
-} from "./stores/timeline-store";
+import { initTimelinePersistence } from "./stores/timeline-store";
 import { restoreMedia } from "./stores/media-store";
 import { registerPanel, type PanelDefinition } from "./web-components/registry";
+import {
+  commands as builtInCommands,
+  registerCommands,
+  clearCommands,
+  installShortcuts,
+  runCommand,
+  isEnabled,
+  getCommand,
+  formatChord,
+} from "./commands";
 
 import FileBrowserPanel from "./panels/FileBrowserPanel";
 import MediaPoolPanel from "./panels/MediaPoolPanel";
@@ -38,10 +42,7 @@ import HistoryPanel from "./panels/HistoryPanel";
 import ExportDialog from "./panels/ExportDialog";
 
 // Helper: mount a SolidJS component into a <ve-panel> web component
-function createPanelElement(
-  title: string,
-  SolidComponent: Component,
-): HTMLElement {
+function createPanelElement(title: string, SolidComponent: Component): HTMLElement {
   const panel = document.createElement("ve-panel");
   panel.setAttribute("title", title);
 
@@ -140,10 +141,51 @@ const App: Component = () => {
     initUIPersistence();
 
     // Restore media entries from persisted file handles
-    restoreMedia();
+    void restoreMedia();
 
     // Register built-in panels
     builtInPanels.forEach((p) => registerPanel(p));
+
+    // Commands: the timeline-level ones are static, the file-level ones close
+    // over App's dialog signals. Clearing first keeps a remount idempotent.
+    clearCommands();
+    registerCommands([
+      ...builtInCommands,
+      {
+        id: "file.new",
+        label: "New Project",
+        category: "File",
+        run: handleNewProject,
+      },
+      {
+        id: "file.open",
+        label: "Open Project",
+        shortcut: "Mod+O",
+        category: "File",
+        run: () => void handleOpenProject(),
+      },
+      {
+        id: "file.save",
+        label: "Save Project",
+        shortcut: "Mod+S",
+        category: "File",
+        run: handleSaveProject,
+      },
+      {
+        id: "file.export",
+        label: "Export",
+        shortcut: "Mod+E",
+        category: "File",
+        run: () => setExportOpen(true),
+      },
+      {
+        id: "view.resetLayout",
+        label: "Reset Layout",
+        category: "View",
+        run: handleResetLayout,
+      },
+    ]);
+    onCleanup(installShortcuts());
 
     // Set up the layout web component
     const layoutEl = layoutRef as unknown as VePanelLayout;
@@ -223,39 +265,55 @@ const App: Component = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleOpenProject = async () => {
+  const handleOpenProject = () => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json,.videos.json";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const data = JSON.parse(text);
-        if (data.tracks) {
-          setProjectState("name", data.name || "Untitled Project");
-          setProjectState("tracks", data.tracks);
-          setProjectState("duration", data.duration || 300);
-          setProjectState("fps", data.fps || 30);
-          setProjectState("width", data.width || 1920);
-          setProjectState("height", data.height || 1080);
-          setProjectState("playheadPosition", 0);
-          setProjectState("isPlaying", false);
+    input.onchange = () =>
+      void (async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const data = JSON.parse(text);
+          if (data.tracks) {
+            setProjectState("name", data.name || "Untitled Project");
+            setProjectState("tracks", data.tracks);
+            setProjectState("duration", data.duration || 300);
+            setProjectState("fps", data.fps || 30);
+            setProjectState("width", data.width || 1920);
+            setProjectState("height", data.height || 1080);
+            setProjectState("playheadPosition", 0);
+            setProjectState("isPlaying", false);
+          }
+        } catch {
+          alert("Failed to load project file.");
         }
-      } catch {
-        alert("Failed to load project file.");
-      }
-    };
+      })();
     input.click();
   };
 
-  const handleDeleteSelected = () => {
-    // Dispatch a synthetic keyboard event to trigger the timeline's delete handler
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Delete", bubbles: true }),
-    );
-  };
+  /**
+   * Builds a menu entry from a registered command, so the label, shortcut
+   * glyph, and enabled state all come from the single command definition
+   * rather than being retyped alongside a second implementation.
+   */
+  const fromCommand = (id: string, labelOverride?: string) => ({
+    // Every field is a getter: this array is built in the component body,
+    // which runs before onMount registers the commands. Reading eagerly gave
+    // menus that displayed raw command ids.
+    get label() {
+      return labelOverride ?? getCommand(id)?.label ?? id;
+    },
+    get shortcut() {
+      const shortcut = getCommand(id)?.shortcut;
+      return shortcut ? formatChord(shortcut) : "";
+    },
+    get disabled() {
+      return !isEnabled(id);
+    },
+    action: () => runCommand(id),
+  });
 
   const menuItems: Record<
     string,
@@ -266,25 +324,26 @@ const App: Component = () => {
       separator?: boolean;
       icon?: string;
       checked?: boolean;
+      disabled?: boolean;
     }[]
   > = {
     File: [
-      { label: "New Project", shortcut: "", action: handleNewProject },
-      { label: "Open Project...", shortcut: "⌘O", action: handleOpenProject },
-      { label: "Save Project", shortcut: "⌘S", action: handleSaveProject },
+      fromCommand("file.new", "New Project"),
+      fromCommand("file.open", "Open Project..."),
+      fromCommand("file.save", "Save Project"),
       { label: "", separator: true },
-      { label: "Export...", shortcut: "⌘E", action: () => setExportOpen(true) },
+      fromCommand("file.export", "Export..."),
     ],
     Edit: [
-      { label: "Undo", shortcut: "⌘Z", action: () => undo() },
-      { label: "Redo", shortcut: "⇧⌘Z", action: () => redo() },
+      fromCommand("edit.undo"),
+      fromCommand("edit.redo"),
       { label: "", separator: true },
-      { label: "Select All", shortcut: "⌘A", action: () => selectAllClips() },
-      { label: "Deselect All", shortcut: "", action: () => clearSelection() },
-      { label: "Delete", shortcut: "⌫", action: handleDeleteSelected },
+      fromCommand("edit.selectAll"),
+      fromCommand("edit.deselectAll"),
+      fromCommand("edit.delete"),
     ],
     View: [
-      { label: "Reset Layout", action: handleResetLayout },
+      fromCommand("view.resetLayout"),
       { label: "", separator: true },
       ...builtInPanels.map((p) => ({
         label: p.name,
@@ -320,9 +379,7 @@ const App: Component = () => {
     <div class="h-full flex flex-col bg-background text-foreground">
       {/* Menu Bar */}
       <div class="menu-bar flex items-center h-8 px-2 bg-panel-header border-b border-border flex-shrink-0 gap-0.5">
-        <span class="text-xs font-bold text-primary mr-3 tracking-wide">
-          VideOS
-        </span>
+        <span class="text-xs font-bold text-primary mr-3 tracking-wide">VideOS</span>
         {Object.entries(menuItems).map(([menu, items]) => (
           <div class="relative">
             <button
@@ -348,7 +405,8 @@ const App: Component = () => {
                     <div class="my-1 border-t border-border" />
                   ) : (
                     <button
-                      class="w-full flex items-center justify-between px-3 py-1.5 text-xs text-popover-foreground hover:bg-accent transition-colors"
+                      disabled={item.disabled}
+                      class="w-full flex items-center justify-between px-3 py-1.5 text-xs text-popover-foreground transition-colors enabled:hover:bg-accent disabled:opacity-40 disabled:cursor-default"
                       onClick={() => {
                         item.action?.();
                         setMenuOpen(null);
@@ -360,9 +418,7 @@ const App: Component = () => {
                             {item.checked ? "✓" : ""}
                           </span>
                         )}
-                        {item.icon && (
-                          <span class="text-[10px]">{item.icon}</span>
-                        )}
+                        {item.icon && <span class="text-[10px]">{item.icon}</span>}
                         <span>{item.label}</span>
                       </span>
                       {item.shortcut && (
@@ -385,7 +441,7 @@ const App: Component = () => {
 
       {/* Panel Layout */}
       <div class="flex-1 min-h-0">
-        {/* @ts-ignore - custom element */}
+        {/* @ts-expect-error - custom element */}
         <ve-panel-layout ref={layoutRef} />
       </div>
 
@@ -478,9 +534,7 @@ const App: Component = () => {
                   <div class="grid grid-cols-2 gap-y-1">
                     {(shortcuts as string[][]).map(([key, desc]) => (
                       <>
-                        <span class="font-mono text-muted-foreground">
-                          {key}
-                        </span>
+                        <span class="font-mono text-muted-foreground">{key}</span>
                         <span class="text-foreground">{desc}</span>
                       </>
                     ))}

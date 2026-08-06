@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
 import { loadState, createPersistEffect } from "@/lib/persist";
+import { projectState } from "@/stores/project-store";
 
 const TIMELINE_KEY = "timeline";
 
@@ -24,7 +25,18 @@ export interface TimelineState {
   snapEnabled: boolean;
   trackDragId: string | null;
   trackDropIndex: number | null;
+  /**
+   * Currently only drives ruler tick density — clip geometry is still a
+   * percentage of the whole project duration, so this does not actually zoom.
+   * Replaced by pixels-per-second plus a scroll offset when the timeline
+   * geometry is rewritten. It lives here rather than in the panel so the
+   * zoom commands have something to call.
+   */
+  zoom: number;
 }
+
+export const MIN_ZOOM = 0.25;
+export const MAX_ZOOM = 4;
 
 function loadTimelinePrefs(): Partial<TimelineState> {
   const saved = loadState<PersistedTimelineState>(TIMELINE_KEY);
@@ -43,17 +55,15 @@ const [timelineState, setTimelineState] = createStore<TimelineState>({
   snapEnabled: true,
   trackDragId: null,
   trackDropIndex: null,
+  zoom: 1,
   ...loadTimelinePrefs(),
 });
 
 /** Call once inside a reactive root to enable auto-save of timeline prefs. */
 export function initTimelinePersistence(): void {
-  createPersistEffect(
-    TIMELINE_KEY,
-    (): PersistedTimelineState => ({
-      snapEnabled: timelineState.snapEnabled,
-    }),
-  );
+  createPersistEffect(TIMELINE_KEY, (): PersistedTimelineState => ({
+    snapEnabled: timelineState.snapEnabled,
+  }));
 }
 
 // ── Selection ────────────────────────────────────────────────────────
@@ -90,12 +100,10 @@ export function isClipSelected(trackId: string, clipId: string): boolean {
 }
 
 export function selectAllClips(): void {
-  import("@/stores/project-store").then(({ projectState }) => {
-    const all: ClipRef[] = projectState.tracks.flatMap((t) =>
-      t.clips.map((c) => ({ trackId: t.id, clipId: c.id })),
-    );
-    setTimelineState("selectedClips", all);
-  });
+  const all: ClipRef[] = projectState.tracks.flatMap((t) =>
+    t.clips.map((c) => ({ trackId: t.id, clipId: c.id })),
+  );
+  setTimelineState("selectedClips", all);
 }
 
 // ── Drag state ───────────────────────────────────────────────────────
@@ -136,6 +144,24 @@ export function endTrackDrag(): void {
 
 export function toggleSnap(): void {
   setTimelineState("snapEnabled", !timelineState.snapEnabled);
+}
+
+// ── Zoom ─────────────────────────────────────────────────────────────
+
+export function setZoom(zoom: number): void {
+  setTimelineState("zoom", Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)));
+}
+
+export function zoomIn(): void {
+  setZoom(timelineState.zoom + 0.25);
+}
+
+export function zoomOut(): void {
+  setZoom(timelineState.zoom - 0.25);
+}
+
+export function resetZoom(): void {
+  setZoom(1);
 }
 
 export { timelineState, setTimelineState };

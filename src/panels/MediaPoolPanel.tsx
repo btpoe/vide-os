@@ -7,6 +7,7 @@ import {
   type MediaEntry,
 } from "@/stores/media-store";
 import { formatFileSize, formatDuration } from "@/lib/fs-access";
+import { takeDragFileHandle } from "@/lib/drag-payload";
 
 const TYPE_ICONS: Record<string, string> = {
   video: "🎬",
@@ -14,9 +15,7 @@ const TYPE_ICONS: Record<string, string> = {
   image: "🖼️",
 };
 
-const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (
-  props,
-) => {
+const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (props) => {
   const handleDragStart = (e: DragEvent) => {
     e.dataTransfer?.setData(
       "application/x-vide-os-media",
@@ -47,9 +46,7 @@ const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (
           when={props.entry.thumbnailUrl}
           fallback={
             <span class="text-xl text-muted-foreground">
-              {props.entry.importing
-                ? "⏳"
-                : TYPE_ICONS[props.entry.type] || "📄"}
+              {props.entry.importing ? "⏳" : TYPE_ICONS[props.entry.type] || "📄"}
             </span>
           }
         >
@@ -72,9 +69,7 @@ const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (
       </div>
       {/* Name */}
       <div class="px-1.5 py-1 bg-card">
-        <div class="text-[10px] truncate text-foreground">
-          {props.entry.name}
-        </div>
+        <div class="text-[10px] truncate text-foreground">{props.entry.name}</div>
       </div>
       {/* Remove button on hover */}
       <button
@@ -90,9 +85,7 @@ const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (
   );
 };
 
-const MediaListItem: Component<{ entry: MediaEntry; selected: boolean }> = (
-  props,
-) => {
+const MediaListItem: Component<{ entry: MediaEntry; selected: boolean }> = (props) => {
   const handleDragStart = (e: DragEvent) => {
     e.dataTransfer?.setData(
       "application/x-vide-os-media",
@@ -123,9 +116,7 @@ const MediaListItem: Component<{ entry: MediaEntry; selected: boolean }> = (
           when={props.entry.thumbnailUrl}
           fallback={
             <span class="text-xs">
-              {props.entry.importing
-                ? "⏳"
-                : TYPE_ICONS[props.entry.type] || "📄"}
+              {props.entry.importing ? "⏳" : TYPE_ICONS[props.entry.type] || "📄"}
             </span>
           }
         >
@@ -175,12 +166,9 @@ const MediaPoolPanel: Component = () => {
     // Handle drag from File Browser
     const fileData = e.dataTransfer?.getData("application/x-vide-os-file");
     if (fileData) {
-      const handle = (window as any).__dragFileHandle as
-        | FileSystemFileHandle
-        | undefined;
+      const handle = takeDragFileHandle();
       if (handle) {
         await importFileHandle(handle);
-        (window as any).__dragFileHandle = undefined;
       }
       return;
     }
@@ -204,7 +192,7 @@ const MediaPoolPanel: Component = () => {
   return (
     <div
       class="h-full flex flex-col text-sm"
-      onDrop={handleDrop}
+      onDrop={(e) => void handleDrop(e)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
     >

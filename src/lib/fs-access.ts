@@ -17,16 +17,7 @@ const VIDEO_EXTS = new Set([
   "flv",
   "wmv",
 ]);
-const AUDIO_EXTS = new Set([
-  "mp3",
-  "wav",
-  "aac",
-  "ogg",
-  "flac",
-  "m4a",
-  "wma",
-  "opus",
-]);
+const AUDIO_EXTS = new Set(["mp3", "wav", "aac", "ogg", "flac", "m4a", "wma", "opus"]);
 const IMAGE_EXTS = new Set([
   "png",
   "jpg",
@@ -40,7 +31,45 @@ const IMAGE_EXTS = new Set([
   "heic",
 ]);
 
+/**
+ * Extensions the browser can realistically decode. The sets above classify a
+ * file for display; this one says whether we can actually play it.
+ *
+ * They used to be the same thing, which meant a `.avi` or `.mkv` imported with
+ * a nice icon and a duration, then rendered black forever with the decode
+ * rejection swallowed. Classification and capability are separate questions.
+ *
+ * This is still an extension heuristic — a real per-track `canDecode()` probe
+ * replaces it when the media engine lands. Codec-in-container mismatches
+ * (HEVC in MP4, ProRes in MOV) are not detectable from the name alone.
+ */
+const LIKELY_DECODABLE_EXTS = new Set([
+  // Containers browsers demux, holding codecs they decode.
+  "mp4",
+  "m4v",
+  "mov",
+  "webm",
+  // Audio.
+  "mp3",
+  "wav",
+  "aac",
+  "ogg",
+  "flac",
+  "m4a",
+  "opus",
+  // Images.
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+  "ico",
+]);
+
 export type MediaType = "video" | "audio" | "image" | "other";
+export type DecodeSupport = "likely" | "needs-conversion";
 
 export function getMediaType(filename: string): MediaType {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
@@ -50,8 +79,31 @@ export function getMediaType(filename: string): MediaType {
   return "other";
 }
 
+/**
+ * Whether this file is worth handing to a decoder. Callers should surface
+ * `needs-conversion` to the user rather than importing and failing silently.
+ */
+export function getDecodeSupport(filename: string): DecodeSupport {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  return LIKELY_DECODABLE_EXTS.has(ext) ? "likely" : "needs-conversion";
+}
+
 export function isMediaFile(filename: string): boolean {
   return getMediaType(filename) !== "other";
+}
+
+/**
+ * `FileSystemHandle` is a base class in lib.dom, not a discriminated union, so
+ * checking `.kind === "file"` does not narrow it on its own.
+ */
+export function isFileHandle(handle: FileSystemHandle): handle is FileSystemFileHandle {
+  return handle.kind === "file";
+}
+
+export function isDirectoryHandle(
+  handle: FileSystemHandle,
+): handle is FileSystemDirectoryHandle {
+  return handle.kind === "directory";
 }
 
 export function getExtension(filename: string): string {
@@ -155,25 +207,18 @@ export async function openDirectoryPicker(): Promise<FileSystemDirectoryHandle |
 
 // ── Get file from handle ──────────────────────────────────────────────
 
-export async function getFileFromHandle(
-  handle: FileSystemFileHandle,
-): Promise<File> {
+export async function getFileFromHandle(handle: FileSystemFileHandle): Promise<File> {
   return handle.getFile();
 }
 
-export async function getObjectURL(
-  handle: FileSystemFileHandle,
-): Promise<string> {
+export async function getObjectURL(handle: FileSystemFileHandle): Promise<string> {
   const file = await handle.getFile();
   return URL.createObjectURL(file);
 }
 
 // ── Thumbnail generation ──────────────────────────────────────────────
 
-export function generateVideoThumbnail(
-  file: File,
-  seekTime = 1,
-): Promise<string> {
+export function generateVideoThumbnail(file: File, seekTime = 1): Promise<string> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.preload = "metadata";
@@ -191,8 +236,7 @@ export function generateVideoThumbnail(
     video.onseeked = () => {
       const canvas = document.createElement("canvas");
       canvas.width = 192;
-      canvas.height =
-        Math.round(192 * (video.videoHeight / video.videoWidth)) || 108;
+      canvas.height = Math.round(192 * (video.videoHeight / video.videoWidth)) || 108;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         URL.revokeObjectURL(url);
@@ -261,7 +305,7 @@ export function getVideoMetadata(file: File): Promise<VideoMetadata> {
     video.onloadedmetadata = () => {
       // Detect audio tracks
       const v = video as any;
-      let hasAudio = false;
+      let hasAudio: boolean;
       if (typeof v.mozHasAudio === "boolean") {
         hasAudio = v.mozHasAudio;
       } else if (typeof v.webkitAudioDecodedByteCount === "number") {
@@ -323,7 +367,8 @@ function openDB(): Promise<IDBDatabase> {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () =>
+      reject(request.error ?? new Error("IndexedDB request failed"));
   });
 }
 
@@ -336,7 +381,7 @@ export async function saveDirectoryHandle(
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).put(handle, key);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
   });
 }
 
@@ -348,7 +393,8 @@ export async function loadDirectoryHandle(
     const tx = db.transaction(STORE_NAME, "readonly");
     const request = tx.objectStore(STORE_NAME).get(key);
     request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
+    request.onerror = () =>
+      reject(request.error ?? new Error("IndexedDB request failed"));
   });
 }
 
@@ -357,8 +403,7 @@ export async function verifyPermission(
 ): Promise<boolean> {
   const opts = { mode: "read" as const };
   if ((await (handle as any).queryPermission(opts)) === "granted") return true;
-  if ((await (handle as any).requestPermission(opts)) === "granted")
-    return true;
+  if ((await (handle as any).requestPermission(opts)) === "granted") return true;
   return false;
 }
 
@@ -373,7 +418,7 @@ export async function saveFileHandle(
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).put(handle, `media:${mediaId}`);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
   });
 }
 
@@ -402,7 +447,8 @@ export async function loadAllFileHandles(): Promise<
         resolve(results);
       }
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () =>
+      reject(request.error ?? new Error("IndexedDB request failed"));
   });
 }
 
@@ -412,7 +458,7 @@ export async function removeFileHandle(mediaId: string): Promise<void> {
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).delete(`media:${mediaId}`);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error ?? new Error("IndexedDB transaction failed"));
   });
 }
 
@@ -421,8 +467,7 @@ export async function verifyFilePermission(
 ): Promise<boolean> {
   const opts = { mode: "read" as const };
   if ((await (handle as any).queryPermission(opts)) === "granted") return true;
-  if ((await (handle as any).requestPermission(opts)) === "granted")
-    return true;
+  if ((await (handle as any).requestPermission(opts)) === "granted") return true;
   return false;
 }
 
@@ -431,8 +476,7 @@ export async function verifyFilePermission(
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024)
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 

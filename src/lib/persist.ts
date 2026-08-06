@@ -1,30 +1,6 @@
 import { createEffect, on } from "solid-js";
-import type { Store } from "solid-js/store";
 
 const PREFIX = "vide-os";
-
-/**
- * Debounced localStorage save. Returns a cleanup function.
- */
-function debouncedSave(key: string, getData: () => unknown, delayMs = 500): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  const save = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      try {
-        const data = getData();
-        localStorage.setItem(`${PREFIX}:${key}`, JSON.stringify(data));
-      } catch (e) {
-        console.warn(`[persist] Failed to save "${key}":`, e);
-      }
-    }, delayMs);
-  };
-
-  save();
-
-  return () => clearTimeout(timer);
-}
 
 /**
  * Load a value from localStorage. Returns null if not found or parse fails.

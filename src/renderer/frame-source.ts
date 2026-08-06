@@ -4,7 +4,7 @@
  * Manages a cache of decoded sources for efficient playback.
  */
 
-import { getFileFromHandle, getMediaType } from "@/lib/fs-access";
+import { getFileFromHandle } from "@/lib/fs-access";
 import type { MediaEntry } from "@/stores/media-store";
 
 export interface FrameSource {
@@ -114,13 +114,12 @@ export function releaseAllFrameSources(): void {
 }
 
 /**
- * Create a solid color frame source (for gaps/placeholders).
+ * Create a solid black frame source (for gaps/placeholders).
+ *
+ * Took r/g/b parameters that it never read — FrameSource has no colour field,
+ * so this has only ever produced black.
  */
-export function createColorSource(
-  r: number = 0,
-  g: number = 0,
-  b: number = 0,
-): FrameSource {
+export function createColorSource(): FrameSource {
   return {
     type: "color",
     width: 1,

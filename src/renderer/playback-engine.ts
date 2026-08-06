@@ -3,11 +3,7 @@
  * and triggers compositor frame renders.
  */
 
-import {
-  projectState,
-  setPlayhead,
-  togglePlayback,
-} from "@/stores/project-store";
+import { projectState, setPlayhead, togglePlayback } from "@/stores/project-store";
 import { type Compositor, renderFrame, renderBlackFrame } from "./compositor";
 import { syncAudio, muteAll } from "./audio-manager";
 

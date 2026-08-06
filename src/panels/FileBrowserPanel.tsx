@@ -5,12 +5,14 @@ import {
   openDirectoryPicker,
   getFileIcon,
   isMediaFile,
+  isFileHandle,
   formatFileSize,
   saveDirectoryHandle,
   loadDirectoryHandle,
   verifyPermission,
 } from "@/lib/fs-access";
 import { importFileHandle } from "@/stores/media-store";
+import { setDragFileHandle } from "@/lib/drag-payload";
 
 const FileTreeItem: Component<{
   entry: FSEntry;
@@ -53,8 +55,11 @@ const FileTreeItem: Component<{
           mediaType: props.entry.mediaType,
         }),
       );
-      // Store handle reference for same-page drag
-      (window as any).__dragFileHandle = props.entry.handle;
+      // A FileSystemFileHandle can't ride in the DataTransfer, so it's stashed
+      // module-side for the drop target to pick up. Narrow on the handle's own
+      // discriminant rather than casting.
+      const handle = props.entry.handle;
+      if (isFileHandle(handle)) setDragFileHandle(handle);
     }
   };
 
@@ -72,7 +77,7 @@ const FileTreeItem: Component<{
           "padding-left": `${props.depth * 14 + 8}px`,
           "padding-right": "8px",
         }}
-        onClick={toggleExpand}
+        onClick={() => void toggleExpand()}
         onDblClick={handleDoubleClick}
         draggable={isMedia}
         onDragStart={handleDragStart}
@@ -126,8 +131,9 @@ const FileTreeItem: Component<{
 const FileBrowserPanel: Component = () => {
   const [entries, setEntries] = createSignal<FSEntry[]>([]);
   const [dirName, setDirName] = createSignal<string>("");
-  const [dirHandle, setDirHandle] =
-    createSignal<FileSystemDirectoryHandle | null>(null);
+  const [dirHandle, setDirHandle] = createSignal<FileSystemDirectoryHandle | null>(
+    null,
+  );
   const [fileCount, setFileCount] = createSignal(0);
 
   const loadDir = async (handle: FileSystemDirectoryHandle) => {
@@ -139,18 +145,18 @@ const FileBrowserPanel: Component = () => {
   };
 
   // Try to restore last opened directory on mount
-  onMount(async () => {
-    try {
-      const saved = await loadDirectoryHandle("last-dir");
-      if (saved) {
-        const ok = await verifyPermission(saved);
-        if (ok) {
-          await loadDir(saved);
+  onMount(() => {
+    void (async () => {
+      try {
+        const saved = await loadDirectoryHandle("last-dir");
+        if (saved) {
+          const ok = await verifyPermission(saved);
+          if (ok) await loadDir(saved);
         }
+      } catch {
+        // Permission denied or handle invalid
       }
-    } catch {
-      // Permission denied or handle invalid
-    }
+    })();
   });
 
   const openDirectory = async () => {
@@ -169,9 +175,7 @@ const FileBrowserPanel: Component = () => {
     const handle = dirHandle();
     if (!handle) return;
     const items = await readDirectory(handle);
-    const mediaFiles = items.filter(
-      (e) => e.kind === "file" && isMediaFile(e.name),
-    );
+    const mediaFiles = items.filter((e) => e.kind === "file" && isMediaFile(e.name));
     for (const f of mediaFiles) {
       await importFileHandle(f.handle as FileSystemFileHandle);
     }
@@ -181,14 +185,14 @@ const FileBrowserPanel: Component = () => {
     <div class="h-full flex flex-col text-sm">
       <div class="p-2 border-b border-border flex gap-1.5">
         <button
-          onClick={openDirectory}
+          onClick={() => void openDirectory()}
           class="flex-1 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
         >
           Open Folder
         </button>
         <Show when={dirHandle()}>
           <button
-            onClick={importAllMedia}
+            onClick={() => void importAllMedia()}
             class="px-2 py-1.5 text-xs font-medium bg-secondary text-secondary-foreground rounded-md hover:bg-accent transition-colors"
             title="Import all media files to pool"
           >
@@ -221,7 +225,11 @@ const FileBrowserPanel: Component = () => {
         >
           <For each={entries()}>
             {(entry) => (
-              <FileTreeItem entry={entry} depth={0} onImport={handleImport} />
+              <FileTreeItem
+                entry={entry}
+                depth={0}
+                onImport={(h) => void handleImport(h)}
+              />
             )}
           </For>
         </Show>

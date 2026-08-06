@@ -6,13 +6,8 @@
 
 import { projectState } from "@/stores/project-store";
 import { mediaState } from "@/stores/media-store";
-import {
-  createCompositor,
-  renderFrame,
-  disposeCompositor,
-  type Compositor,
-} from "./compositor";
-import { preloadFrameSources, releaseAllFrameSources } from "./frame-source";
+import { createCompositor, renderFrame, disposeCompositor } from "./compositor";
+import { preloadFrameSources } from "./frame-source";
 
 export interface ExportSettings {
   format: "webm" | "mp4";
@@ -25,13 +20,7 @@ export interface ExportSettings {
 }
 
 export interface ExportProgress {
-  phase:
-    | "preparing"
-    | "rendering"
-    | "encoding"
-    | "complete"
-    | "error"
-    | "cancelled";
+  phase: "preparing" | "rendering" | "encoding" | "complete" | "error" | "cancelled";
   currentFrame: number;
   totalFrames: number;
   percent: number;
@@ -213,7 +202,7 @@ export async function exportTimeline(
       recorder.stop();
       await recordingDone;
       disposeCompositor(compositor);
-      if (audioCtx) audioCtx.close();
+      if (audioCtx) void audioCtx.close();
       _cancelExport = null;
 
       onProgress({
@@ -273,7 +262,7 @@ export async function exportTimeline(
   await recordingDone;
 
   disposeCompositor(compositor);
-  if (audioCtx) audioCtx.close();
+  if (audioCtx) void audioCtx.close();
   _cancelExport = null;
 
   const blob = new Blob(chunks, { type: mimeType });
@@ -362,9 +351,7 @@ async function mixTimelineAudio(
     try {
       const file = await entry.handle.getFile();
       const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await offlineCtx.decodeAudioData(
-        arrayBuffer.slice(0),
-      );
+      const audioBuffer = await offlineCtx.decodeAudioData(arrayBuffer.slice(0));
 
       // Create a source for this clip
       const source = offlineCtx.createBufferSource();
@@ -373,10 +360,7 @@ async function mixTimelineAudio(
 
       // Schedule: start at clip.startTime, offset by inPoint, play for clip duration
       const offset = clip.inPoint;
-      const clipDuration = Math.min(
-        clip.duration,
-        audioBuffer.duration - offset,
-      );
+      const clipDuration = Math.min(clip.duration, audioBuffer.duration - offset);
       if (clipDuration > 0) {
         source.start(clip.startTime, offset, clipDuration);
       }

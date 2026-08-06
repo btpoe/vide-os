@@ -7,7 +7,6 @@ import {
   generateImageThumbnail,
   getVideoMetadata,
   getAudioDuration,
-  formatFileSize,
   saveFileHandle,
   loadAllFileHandles,
   removeFileHandle,
@@ -54,10 +53,7 @@ export function addMediaEntry(entry: MediaEntry): void {
   setMediaState("entries", (prev) => [...prev, entry]);
 }
 
-export function updateMediaEntry(
-  id: string,
-  updates: Partial<MediaEntry>,
-): void {
+export function updateMediaEntry(id: string, updates: Partial<MediaEntry>): void {
   setMediaState("entries", (e) => e.id === id, updates);
 }
 
@@ -71,9 +67,7 @@ export function clearMedia(): void {
   setMediaState("selectedIds", []);
 }
 
-export function setDirectoryHandle(
-  handle: FileSystemDirectoryHandle | null,
-): void {
+export function setDirectoryHandle(handle: FileSystemDirectoryHandle | null): void {
   setMediaState("directoryHandle", handle);
 }
 
@@ -88,9 +82,7 @@ export function selectMedia(id: string, multi = false): void {
 }
 
 export function getSelectedEntries(): MediaEntry[] {
-  return mediaState.entries.filter((e) =>
-    mediaState.selectedIds.includes(e.id),
-  );
+  return mediaState.entries.filter((e) => mediaState.selectedIds.includes(e.id));
 }
 
 /**
@@ -208,7 +200,7 @@ export async function restoreMedia(): Promise<void> {
       addMediaEntry(entry);
 
       // Generate thumbnail and metadata in background (don't await — let them load in parallel)
-      (async () => {
+      void (async () => {
         try {
           let thumbnailUrl: string | undefined;
           let duration: number | undefined;
@@ -229,9 +221,7 @@ export async function restoreMedia(): Promise<void> {
             }
             hasAudio = meta?.hasAudio ?? true;
           } else if (mediaType === "image") {
-            thumbnailUrl = await generateImageThumbnail(file).catch(
-              () => undefined,
-            );
+            thumbnailUrl = await generateImageThumbnail(file).catch(() => undefined);
           } else if (mediaType === "audio") {
             duration = await getAudioDuration(file).catch(() => undefined);
             hasAudio = true;

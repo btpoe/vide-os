@@ -31,7 +31,9 @@ function loadLayout(): LayoutNode | null {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) return JSON.parse(saved);
-  } catch {}
+  } catch {
+    // Corrupt or unreadable layout — fall back to the default.
+  }
   return null;
 }
 
@@ -100,19 +102,18 @@ const [uiState, setUIState] = createStore<UIState>({
 
 /** Call once inside a reactive root to enable auto-save of UI preferences. */
 export function initUIPersistence(): void {
-  createPersistEffect(
-    UI_PREFS_KEY,
-    (): PersistedUIPrefs => ({
-      selectedTool: uiState.selectedTool,
-      theme: uiState.theme,
-    }),
-  );
+  createPersistEffect(UI_PREFS_KEY, (): PersistedUIPrefs => ({
+    selectedTool: uiState.selectedTool,
+    theme: uiState.theme,
+  }));
 }
 
 export function saveLayout(): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(uiState.layout));
-  } catch {}
+  } catch {
+    // Quota exceeded or storage disabled — layout is not worth failing over.
+  }
 }
 
 export function resetLayout(): void {
@@ -298,10 +299,7 @@ export function movePanel(
 
       // Fix activeTab
       if (node.type === "tabs") {
-        if (
-          node.activeTab !== undefined &&
-          node.activeTab >= node.children.length
-        ) {
+        if (node.activeTab !== undefined && node.activeTab >= node.children.length) {
           node.activeTab = Math.max(0, node.children.length - 1);
         }
       }

@@ -1,4 +1,4 @@
-import { Component, Show, createSignal, onCleanup } from "solid-js";
+import { Component, Show, createSignal } from "solid-js";
 import {
   type ExportSettings,
   type ExportProgress,
@@ -124,7 +124,8 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
                             : "bg-secondary/50 text-muted-foreground/40 border-border/50 cursor-not-allowed"
                       }`}
                       onClick={() => {
-                        if (f.supported) updateSetting("format", f.id as "webm" | "mp4");
+                        if (f.supported)
+                          updateSetting("format", f.id as "webm" | "mp4");
                       }}
                       disabled={!f.supported}
                       title={f.supported ? f.label : `${f.label} (not supported)`}
@@ -237,9 +238,7 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
           {/* Progress */}
           <Show when={exporting()}>
             <div class="px-5 py-6 space-y-4">
-              <div class="text-sm text-foreground font-medium">
-                {phaseLabel()}
-              </div>
+              <div class="text-sm text-foreground font-medium">{phaseLabel()}</div>
 
               {/* Progress bar */}
               <div class="w-full h-2 bg-secondary rounded-full overflow-hidden">
@@ -260,8 +259,8 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
                 <span>{Math.round(progress()?.percent ?? 0)}%</span>
                 <Show when={progress()?.phase === "rendering"}>
                   <span>
-                    Elapsed: {formatTime(progress()?.elapsedMs ?? 0)} ·
-                    Remaining: ~{formatTime(progress()?.estimatedRemainingMs ?? 0)}
+                    Elapsed: {formatTime(progress()?.elapsedMs ?? 0)} · Remaining: ~
+                    {formatTime(progress()?.estimatedRemainingMs ?? 0)}
                   </span>
                 </Show>
               </div>
@@ -289,7 +288,7 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
             <Show when={!exporting()}>
               <button
                 class="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
-                onClick={handleExport}
+                onClick={() => void handleExport()}
               >
                 Export
               </button>

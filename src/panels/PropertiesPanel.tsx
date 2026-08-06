@@ -11,21 +11,14 @@ import {
   updateKeyframe,
   removeAllKeyframes,
   getEffectValueAtTime,
-  type ClipTransition,
-  type ClipEffect,
+  setPlayhead,
   type Keyframe,
   type KeyframeEasing,
 } from "@/stores/project-store";
 import { mediaState } from "@/stores/media-store";
 import { timelineState } from "@/stores/timeline-store";
-import {
-  EFFECT_DEFINITIONS,
-  type EffectUniform,
-} from "@/renderer/effects-pipeline";
-import {
-  TRANSITION_DEFINITIONS,
-  type TransitionType,
-} from "@/renderer/transitions";
+import { EFFECT_DEFINITIONS } from "@/renderer/effects-pipeline";
+import { TRANSITION_DEFINITIONS } from "@/renderer/transitions";
 import { pushAction } from "@/stores/history-store";
 import { formatDuration } from "@/lib/fs-access";
 
@@ -42,32 +35,22 @@ const PropertiesPanel: Component = () => {
 
   const PropRow = (props: { label: string; value: string }) => (
     <div class="flex items-center gap-2">
-      <label class="text-xs text-muted-foreground w-16 shrink-0">
-        {props.label}
-      </label>
+      <label class="text-xs text-muted-foreground w-16 shrink-0">{props.label}</label>
       <span class="text-xs text-foreground truncate">{props.value}</span>
     </div>
   );
 
-  const PropInput = (props: {
-    label: string;
-    value: number;
-    unit?: string;
-    disabled?: boolean;
-  }) => (
-    <div class="flex items-center gap-2">
-      <label class="text-xs text-muted-foreground w-16 shrink-0">
-        {props.label}
-      </label>
-      <input
-        type="number"
-        value={props.value}
-        disabled={props.disabled}
-        class="flex-1 px-2 py-1 text-xs bg-input border border-border rounded text-foreground disabled:opacity-50"
-      />
-      <Show when={props.unit}>
-        <span class="text-xs text-muted-foreground w-6">{props.unit}</span>
-      </Show>
+  /**
+   * Marks a section the renderer does not implement yet. Previously these were
+   * rendered as real-looking inputs and sliders that silently did nothing —
+   * an input with no handler reads as broken, not as unbuilt.
+   */
+  const Unbuilt = (props: { title: string; note: string }) => (
+    <div>
+      <div class="text-[10px] text-muted-foreground/60 font-semibold uppercase tracking-wider mb-1">
+        {props.title}
+      </div>
+      <div class="text-[10px] text-muted-foreground/60 italic">{props.note}</div>
     </div>
   );
 
@@ -81,8 +64,7 @@ const PropertiesPanel: Component = () => {
             <span>Select a clip to edit properties</span>
             <Show when={timelineState.selectedClips.length > 1}>
               <span class="text-[10px]">
-                {timelineState.selectedClips.length} clips selected — select one
-                to edit
+                {timelineState.selectedClips.length} clips selected — select one to edit
               </span>
             </Show>
           </div>
@@ -99,18 +81,12 @@ const PropertiesPanel: Component = () => {
                 <PropRow label="Name" value={info().media?.name || "Unknown"} />
                 <PropRow label="Type" value={info().track.type} />
                 <PropRow label="Track" value={info().track.name} />
-                <PropRow
-                  label="Start"
-                  value={formatDuration(info().clip.startTime)}
-                />
+                <PropRow label="Start" value={formatDuration(info().clip.startTime)} />
                 <PropRow
                   label="Duration"
                   value={formatDuration(info().clip.duration)}
                 />
-                <PropRow
-                  label="In Point"
-                  value={formatDuration(info().clip.inPoint)}
-                />
+                <PropRow label="In Point" value={formatDuration(info().clip.inPoint)} />
                 <PropRow
                   label="Out Point"
                   value={formatDuration(info().clip.outPoint)}
@@ -272,58 +248,16 @@ const PropertiesPanel: Component = () => {
               </div>
             </Show>
 
-            {/* Transform */}
-            <div>
-              <div class="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">
-                Transform
-              </div>
-              <div class="space-y-1.5">
-                <PropInput label="Position X" value={0} unit="px" />
-                <PropInput label="Position Y" value={0} unit="px" />
-                <PropInput label="Scale" value={100} unit="%" />
-                <PropInput label="Rotation" value={0} unit="°" />
-              </div>
-            </div>
+            <Unbuilt
+              title="Transform & Opacity"
+              note="Position, scale, rotation and opacity are not wired to the renderer yet."
+            />
 
-            {/* Opacity */}
-            <div>
-              <div class="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">
-                Opacity
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="flex-1 h-1.5 bg-secondary rounded-full">
-                  <div class="h-full w-full bg-primary rounded-full" />
-                </div>
-                <span class="text-xs text-muted-foreground w-8 text-right">
-                  100%
-                </span>
-              </div>
-            </div>
-
-            {/* Audio (for video/audio clips) */}
-            <Show
-              when={
-                info().track.type === "video" || info().track.type === "audio"
-              }
-            >
-              <div>
-                <div class="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">
-                  Audio
-                </div>
-                <div class="space-y-1.5">
-                  <div class="flex items-center gap-2">
-                    <label class="text-xs text-muted-foreground w-16 shrink-0">
-                      Volume
-                    </label>
-                    <div class="flex-1 h-1.5 bg-secondary rounded-full">
-                      <div class="h-full w-full bg-green-500 rounded-full" />
-                    </div>
-                    <span class="text-xs text-muted-foreground w-8 text-right">
-                      100%
-                    </span>
-                  </div>
-                </div>
-              </div>
+            <Show when={info().track.type === "video" || info().track.type === "audio"}>
+              <Unbuilt
+                title="Audio"
+                note="Per-clip volume, pan and fades are not wired to the audio engine yet."
+              />
             </Show>
 
             {/* Transition */}
@@ -335,8 +269,7 @@ const PropertiesPanel: Component = () => {
                 <div class="flex flex-wrap gap-1">
                   <For each={TRANSITION_DEFINITIONS}>
                     {(tDef) => {
-                      const isActive = () =>
-                        info().clip.transition?.type === tDef.id;
+                      const isActive = () => info().clip.transition?.type === tDef.id;
                       return (
                         <button
                           class={`px-2 py-1 text-[10px] rounded border ${
@@ -346,19 +279,12 @@ const PropertiesPanel: Component = () => {
                           }`}
                           onClick={() => {
                             if (isActive()) {
-                              removeClipTransition(
-                                info().track.id,
-                                info().clip.id,
-                              );
+                              removeClipTransition(info().track.id, info().clip.id);
                             } else {
-                              setClipTransition(
-                                info().track.id,
-                                info().clip.id,
-                                {
-                                  type: tDef.id,
-                                  duration: 0.5,
-                                },
-                              );
+                              setClipTransition(info().track.id, info().clip.id, {
+                                type: tDef.id,
+                                duration: 0.5,
+                              });
                             }
                           }}
                         >
@@ -405,8 +331,7 @@ const PropertiesPanel: Component = () => {
                 when={info().clip.effects.length > 0}
                 fallback={
                   <div class="text-[10px] text-muted-foreground/60 italic">
-                    No effects applied — click an effect in the Effects panel to
-                    add
+                    No effects applied — click an effect in the Effects panel to add
                   </div>
                 }
               >
@@ -414,9 +339,7 @@ const PropertiesPanel: Component = () => {
                   <For each={info().clip.effects}>
                     {(fx) => {
                       const def = () =>
-                        EFFECT_DEFINITIONS.find(
-                          (d) => d.id === fx.definitionId,
-                        );
+                        EFFECT_DEFINITIONS.find((d) => d.id === fx.definitionId);
                       const [expanded, setExpanded] = createSignal(true);
                       const visibleUniforms = () =>
                         def()?.uniforms.filter(
@@ -465,9 +388,7 @@ const PropertiesPanel: Component = () => {
                             </button>
                           </div>
                           {/* Effect parameters with keyframes */}
-                          <Show
-                            when={expanded() && visibleUniforms().length > 0}
-                          >
+                          <Show when={expanded() && visibleUniforms().length > 0}>
                             <div class="px-2 pb-2 space-y-2.5">
                               <For each={visibleUniforms()}>
                                 {(uniform) => {
@@ -479,9 +400,7 @@ const PropertiesPanel: Component = () => {
                                     if (!allKfs) return [] as Keyframe[];
                                     // Touch Object.keys so SolidJS sees changes
                                     Object.keys(allKfs);
-                                    return (
-                                      allKfs[uniform.name] || ([] as Keyframe[])
-                                    );
+                                    return allKfs[uniform.name] || ([] as Keyframe[]);
                                   };
                                   const hasKeyframes = () => kfs().length > 0;
                                   const [showEasing, setShowEasing] =
@@ -505,8 +424,7 @@ const PropertiesPanel: Component = () => {
                                   const keyframeAtPlayhead = () =>
                                     kfs().find(
                                       (k) =>
-                                        Math.abs(k.time - clipRelativeTime()) <
-                                        0.02,
+                                        Math.abs(k.time - clipRelativeTime()) < 0.02,
                                     );
 
                                   const prevKeyframe = () => {
@@ -521,10 +439,7 @@ const PropertiesPanel: Component = () => {
 
                                   const nextKeyframe = () => {
                                     const t = clipRelativeTime();
-                                    return (
-                                      kfs().find((k) => k.time > t + 0.02) ||
-                                      null
-                                    );
+                                    return kfs().find((k) => k.time > t + 0.02) || null;
                                   };
 
                                   const toggleKeyframeAtPlayhead = () => {
@@ -586,26 +501,14 @@ const PropertiesPanel: Component = () => {
                                   const goToPrevKeyframe = () => {
                                     const kf = prevKeyframe();
                                     if (kf) {
-                                      import("@/stores/project-store").then(
-                                        ({ setPlayhead }) => {
-                                          setPlayhead(
-                                            info().clip.startTime + kf.time,
-                                          );
-                                        },
-                                      );
+                                      setPlayhead(info().clip.startTime + kf.time);
                                     }
                                   };
 
                                   const goToNextKeyframe = () => {
                                     const kf = nextKeyframe();
                                     if (kf) {
-                                      import("@/stores/project-store").then(
-                                        ({ setPlayhead }) => {
-                                          setPlayhead(
-                                            info().clip.startTime + kf.time,
-                                          );
-                                        },
-                                      );
+                                      setPlayhead(info().clip.startTime + kf.time);
                                     }
                                   };
 
@@ -645,8 +548,7 @@ const PropertiesPanel: Component = () => {
                                               e.currentTarget.value,
                                             );
                                             if (hasKeyframes()) {
-                                              const existing =
-                                                keyframeAtPlayhead();
+                                              const existing = keyframeAtPlayhead();
                                               if (existing) {
                                                 updateKeyframe(
                                                   info().track.id,
@@ -763,20 +665,11 @@ const PropertiesPanel: Component = () => {
                                                 0,
                                                 Math.min(
                                                   1,
-                                                  (e.clientX - rect.left) /
-                                                    rect.width,
+                                                  (e.clientX - rect.left) / rect.width,
                                                 ),
                                               );
-                                              const time =
-                                                pct * info().clip.duration;
-                                              import("@/stores/project-store").then(
-                                                ({ setPlayhead }) => {
-                                                  setPlayhead(
-                                                    info().clip.startTime +
-                                                      time,
-                                                  );
-                                                },
-                                              );
+                                              const time = pct * info().clip.duration;
+                                              setPlayhead(info().clip.startTime + time);
                                             }}
                                           >
                                             {/* Playhead indicator */}
@@ -790,13 +683,11 @@ const PropertiesPanel: Component = () => {
                                             <For each={kfs()}>
                                               {(kf) => {
                                                 const pct = () =>
-                                                  (kf.time /
-                                                    info().clip.duration) *
+                                                  (kf.time / info().clip.duration) *
                                                   100;
                                                 const isAtPlayhead = () =>
                                                   Math.abs(
-                                                    kf.time -
-                                                      clipRelativeTime(),
+                                                    kf.time - clipRelativeTime(),
                                                   ) < 0.02;
                                                 return (
                                                   <div
@@ -811,14 +702,8 @@ const PropertiesPanel: Component = () => {
                                                     title={`${kf.time.toFixed(2)}s = ${kf.value.toFixed(2)} (${kf.easing})`}
                                                     onClick={(e) => {
                                                       e.stopPropagation();
-                                                      import("@/stores/project-store").then(
-                                                        ({ setPlayhead }) => {
-                                                          setPlayhead(
-                                                            info().clip
-                                                              .startTime +
-                                                              kf.time,
-                                                          );
-                                                        },
+                                                      setPlayhead(
+                                                        info().clip.startTime + kf.time,
                                                       );
                                                     }}
                                                   />
@@ -829,10 +714,7 @@ const PropertiesPanel: Component = () => {
 
                                           {/* Easing selector (for keyframe at playhead) */}
                                           <Show
-                                            when={
-                                              showEasing() &&
-                                              keyframeAtPlayhead()
-                                            }
+                                            when={showEasing() && keyframeAtPlayhead()}
                                           >
                                             {(kf) => (
                                               <div class="flex flex-wrap gap-1">

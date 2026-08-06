@@ -1,12 +1,4 @@
-import {
-  Component,
-  For,
-  Show,
-  createSignal,
-  createMemo,
-  onMount,
-  onCleanup,
-} from "solid-js";
+import { Component, For, Show, createSignal, createMemo } from "solid-js";
 import {
   projectState,
   addClipToTrack,
@@ -15,7 +7,6 @@ import {
   splitClipAtTime,
   trimClipLeft,
   trimClipRight,
-  getClipAt,
   snapToNearest,
   setPlayhead,
   togglePlayback,
@@ -30,7 +21,6 @@ import {
   timelineState,
   selectClip,
   clearSelection,
-  selectAllClips,
   isClipSelected,
   startDrag,
   endDrag,
@@ -40,16 +30,15 @@ import {
   startTrackDrag,
   updateTrackDropIndex,
   endTrackDrag,
+  zoomIn,
+  zoomOut,
 } from "@/stores/timeline-store";
-import { uiState, setSelectedTool } from "@/stores/ui-store";
+import { uiState } from "@/stores/ui-store";
 import { pushAction } from "@/stores/history-store";
 import { formatDuration, getFileFromHandle } from "@/lib/fs-access";
-import {
-  getCachedWaveform,
-  getWaveform,
-  waveformToSvgPath,
-} from "@/lib/waveform";
+import { getCachedWaveform, getWaveform, waveformToSvgPath } from "@/lib/waveform";
 import { getCachedThumbnail, getClipThumbnail } from "@/lib/clip-thumbnails";
+import { takeDragFileHandle } from "@/lib/drag-payload";
 
 const TRACK_HEIGHT = 44;
 const HEADER_WIDTH = 120;
@@ -57,7 +46,6 @@ const TRIM_HANDLE_WIDTH = 6;
 const SNAP_THRESHOLD_PX = 8;
 
 const TimelinePanel: Component = () => {
-  const [zoom, setZoom] = createSignal(1);
   const [dropTarget, setDropTarget] = createSignal<string | null>(null);
   const [snapLine, setSnapLine] = createSignal<number | null>(null);
   const [waveformVersion, setWaveformVersion] = createSignal(0);
@@ -123,7 +111,7 @@ const TimelinePanel: Component = () => {
 
   const rulerTicks = createMemo(() => {
     const dur = projectState.duration;
-    const step = Math.max(5, Math.round(30 / zoom()));
+    const step = Math.max(5, Math.round(30 / timelineState.zoom));
     const ticks: { pos: number; label: string }[] = [];
     for (let t = 0; t <= dur; t += step) {
       ticks.push({ pos: (t / dur) * 100, label: formatDuration(t) });
@@ -225,52 +213,33 @@ const TimelinePanel: Component = () => {
           `Add ${data.name}`,
           "➕",
           () => removeClip(trackId, clip.id),
-          () =>
-            addClipToTrack(
-              trackId,
-              data.id,
-              data.name,
-              duration,
-              clip.startTime,
-            ),
+          () => addClipToTrack(trackId, data.id, data.name, duration, clip.startTime),
         );
-      } catch {}
+      } catch {
+        // Malformed drag payload — ignore the drop.
+      }
       return;
     }
 
     const fileData = e.dataTransfer?.getData("application/x-vide-os-file");
     if (fileData) {
-      const handle = (window as any).__dragFileHandle as
-        | FileSystemFileHandle
-        | undefined;
+      const handle = takeDragFileHandle();
       if (handle) {
-        import("@/stores/media-store").then(({ importFileHandle }) => {
-          importFileHandle(handle).then((entry) => {
-            if (entry) {
-              const duration = entry.duration || 10;
-              const clip = addClipToTrack(
-                trackId,
-                entry.id,
-                entry.name,
-                duration,
-              );
-              pushAction(
-                `Add ${entry.name}`,
-                "➕",
-                () => removeClip(trackId, clip.id),
-                () =>
-                  addClipToTrack(
-                    trackId,
-                    entry.id,
-                    entry.name,
-                    duration,
-                    clip.startTime,
-                  ),
-              );
-            }
-          });
-        });
-        (window as any).__dragFileHandle = undefined;
+        void (async () => {
+          const { importFileHandle } = await import("@/stores/media-store");
+          const entry = await importFileHandle(handle);
+          if (!entry) return;
+
+          const duration = entry.duration || 10;
+          const clip = addClipToTrack(trackId, entry.id, entry.name, duration);
+          pushAction(
+            `Add ${entry.name}`,
+            "➕",
+            () => removeClip(trackId, clip.id),
+            () =>
+              addClipToTrack(trackId, entry.id, entry.name, duration, clip.startTime),
+          );
+        })();
       }
     }
   };
@@ -304,7 +273,7 @@ const TimelinePanel: Component = () => {
             // Undo: merge clips back
             removeClip(trackId, newClip.id);
             // Restore original duration
-            const origDur = clip.duration + newClip.duration;
+            const _origDur = clip.duration + newClip.duration;
             moveClip(trackId, clip.id, clip.startTime);
             // We'd need to restore duration — simplified undo
           },
@@ -361,15 +330,12 @@ const TimelinePanel: Component = () => {
           snapThresholdTime(),
           clip.id,
         );
-        if (
-          Math.abs(endSnap - (newTime + clip.duration)) < snapThresholdTime()
-        ) {
+        if (Math.abs(endSnap - (newTime + clip.duration)) < snapThresholdTime()) {
           newTime = endSnap - clip.duration;
           setSnapLine(endSnap);
         } else if (
-          Math.abs(
-            newTime - snapToNearest(newTime, snapThresholdTime(), clip.id),
-          ) < 0.01
+          Math.abs(newTime - snapToNearest(newTime, snapThresholdTime(), clip.id)) <
+          0.01
         ) {
           setSnapLine(newTime);
         } else {
@@ -420,7 +386,7 @@ const TimelinePanel: Component = () => {
     const startX = e.clientX;
     const origStart = clip.startTime;
     const origDuration = clip.duration;
-    const origInPoint = clip.inPoint;
+    const _origInPoint = clip.inPoint;
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
@@ -538,181 +504,8 @@ const TimelinePanel: Component = () => {
     endTrackDrag();
   };
 
-  // ── Keyboard shortcuts ───────────────────────────────────────────
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    // Don't capture if user is typing in an input
-    const tag = (e.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-    switch (e.key) {
-      case " ":
-        e.preventDefault();
-        togglePlayback();
-        break;
-      case "Delete":
-      case "Backspace":
-        if (timelineState.selectedClips.length > 0) {
-          e.preventDefault();
-          deleteSelectedClips();
-        }
-        break;
-      case "Home":
-        e.preventDefault();
-        setPlayhead(0);
-        break;
-      case "End":
-        e.preventDefault();
-        setPlayhead(projectState.duration);
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        if (e.shiftKey) {
-          nudgeSelectedClips(-1);
-        } else {
-          setPlayhead(projectState.playheadPosition - 1 / projectState.fps);
-        }
-        break;
-      case "ArrowRight":
-        e.preventDefault();
-        if (e.shiftKey) {
-          nudgeSelectedClips(1);
-        } else {
-          setPlayhead(projectState.playheadPosition + 1 / projectState.fps);
-        }
-        break;
-      case "j":
-      case "J":
-        setPlayhead(projectState.playheadPosition - 5);
-        break;
-      case "k":
-      case "K":
-        togglePlayback();
-        break;
-      case "l":
-      case "L":
-        setPlayhead(projectState.playheadPosition + 5);
-        break;
-      case "s":
-      case "S":
-        if (!e.metaKey && !e.ctrlKey) {
-          toggleSnap();
-        }
-        break;
-      case "a":
-      case "A":
-        if (e.metaKey || e.ctrlKey) {
-          e.preventDefault();
-          selectAllClips();
-        }
-        break;
-      case "z":
-      case "Z":
-        if (e.metaKey || e.ctrlKey) {
-          e.preventDefault();
-          if (e.shiftKey) {
-            import("@/stores/history-store").then(({ redo }) => redo());
-          } else {
-            import("@/stores/history-store").then(({ undo }) => undo());
-          }
-        }
-        break;
-      case "=":
-      case "+":
-        if (e.metaKey || e.ctrlKey) {
-          e.preventDefault();
-          setZoom((z) => Math.min(4, z + 0.25));
-        }
-        break;
-      case "-":
-        if (e.metaKey || e.ctrlKey) {
-          e.preventDefault();
-          setZoom((z) => Math.max(0.25, z - 0.25));
-        }
-        break;
-      // Tool shortcuts
-      case "v":
-      case "V":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("select");
-        break;
-      case "c":
-      case "C":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("razor");
-        break;
-      case "t":
-      case "T":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("trim");
-        break;
-      case "y":
-      case "Y":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("slip");
-        break;
-      case "u":
-      case "U":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("slide");
-        break;
-      case "h":
-      case "H":
-        if (!e.metaKey && !e.ctrlKey) setSelectedTool("hand");
-        break;
-    }
-  };
-
-  const deleteSelectedClips = () => {
-    const clips = [...timelineState.selectedClips];
-    // Store clip data for undo
-    const clipData: { trackId: string; clip: Clip }[] = [];
-    for (const ref of clips) {
-      const track = projectState.tracks.find((t) => t.id === ref.trackId);
-      const clip = track?.clips.find((c) => c.id === ref.clipId);
-      if (clip) clipData.push({ trackId: ref.trackId, clip: { ...clip } });
-    }
-
-    for (const ref of clips) {
-      removeClip(ref.trackId, ref.clipId);
-    }
-    clearSelection();
-
-    pushAction(
-      `Delete ${clips.length} clip${clips.length > 1 ? "s" : ""}`,
-      "🗑",
-      () => {
-        // Undo: re-add clips
-        for (const { trackId, clip } of clipData) {
-          addClipToTrack(
-            trackId,
-            clip.mediaId,
-            "",
-            clip.duration,
-            clip.startTime,
-          );
-        }
-      },
-      () => {
-        for (const { trackId, clip } of clipData) {
-          removeClip(trackId, clip.id);
-        }
-      },
-    );
-  };
-
-  const nudgeSelectedClips = (seconds: number) => {
-    for (const ref of timelineState.selectedClips) {
-      const track = projectState.tracks.find((t) => t.id === ref.trackId);
-      const clip = track?.clips.find((c) => c.id === ref.clipId);
-      if (clip) {
-        moveClip(ref.trackId, ref.clipId, clip.startTime + seconds);
-      }
-    }
-  };
-
-  onMount(() => {
-    window.addEventListener("keydown", handleKeyDown);
-  });
-
-  onCleanup(() => {
-    window.removeEventListener("keydown", handleKeyDown);
-  });
+  // Keyboard shortcuts live in the command registry (src/commands), installed
+  // once by App, so the menu bar and the timeline share one implementation.
 
   // ── Clip cursor based on tool ────────────────────────────────────
 
@@ -726,10 +519,7 @@ const TimelinePanel: Component = () => {
   // ── Render ───────────────────────────────────────────────────────
 
   return (
-    <div
-      class="h-full flex flex-col text-sm select-none"
-      style={{ "min-height": "0" }}
-    >
+    <div class="h-full flex flex-col text-sm select-none" style={{ "min-height": "0" }}>
       {/* Transport bar */}
       <div
         style={{
@@ -840,11 +630,11 @@ const TimelinePanel: Component = () => {
               color: "inherit",
               "font-size": "14px",
             }}
-            onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))}
+            onClick={zoomOut}
           >
             −
           </button>
-          <span>{Math.round(zoom() * 100)}%</span>
+          <span>{Math.round(timelineState.zoom * 100)}%</span>
           <button
             style={{
               background: "none",
@@ -853,7 +643,7 @@ const TimelinePanel: Component = () => {
               color: "inherit",
               "font-size": "14px",
             }}
-            onClick={() => setZoom((z) => Math.min(4, z + 0.25))}
+            onClick={zoomIn}
           >
             +
           </button>
@@ -1034,9 +824,7 @@ const TimelinePanel: Component = () => {
                   onClick={() => toggleTrackLock(track.id)}
                   style={{
                     "font-size": "10px",
-                    color: track.locked
-                      ? "#eab308"
-                      : "var(--color-muted-foreground)",
+                    color: track.locked ? "#eab308" : "var(--color-muted-foreground)",
                     background: "none",
                     border: "none",
                     cursor: "pointer",
@@ -1129,12 +917,9 @@ const TimelinePanel: Component = () => {
                           "box-shadow": selected()
                             ? `0 0 8px rgba(${bgColor},0.4)`
                             : "none",
-                          transition:
-                            "background 0.1s, border 0.1s, box-shadow 0.1s",
+                          transition: "background 0.1s, border 0.1s, box-shadow 0.1s",
                         }}
-                        onMouseDown={(e) =>
-                          handleClipMouseDown(track.id, clip, e)
-                        }
+                        onMouseDown={(e) => handleClipMouseDown(track.id, clip, e)}
                         title={`${getClipLabel(clip)} (${formatDuration(clip.duration)})`}
                       >
                         {/* Left trim handle */}
@@ -1206,10 +991,7 @@ const TimelinePanel: Component = () => {
                               opacity: selected() ? "0.6" : "0.4",
                             }}
                           >
-                            <path
-                              d={waveformPath()!}
-                              fill={`rgba(${bgColor},0.7)`}
-                            />
+                            <path d={waveformPath()!} fill={`rgba(${bgColor},0.7)`} />
                           </svg>
                         </Show>
                         {/* Clip label */}

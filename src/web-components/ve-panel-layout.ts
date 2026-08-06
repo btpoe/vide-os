@@ -208,9 +208,6 @@ export class VePanelLayout extends HTMLElement {
     const style = document.createElement("style");
     style.textContent = layoutStyles;
     this._shadow.appendChild(style);
-
-    this._onMouseMove = this._onMouseMove.bind(this);
-    this._onMouseUp = this._onMouseUp.bind(this);
   }
 
   connectedCallback() {
@@ -236,14 +233,11 @@ export class VePanelLayout extends HTMLElement {
               node instanceof HTMLStyleElement ||
               (node instanceof HTMLLinkElement && node.rel === "stylesheet")
             ) {
-              this._mirrorStyleNode(node as HTMLStyleElement | HTMLLinkElement);
+              this._mirrorStyleNode(node);
             }
           }
           for (const node of m.removedNodes) {
-            if (
-              node instanceof HTMLStyleElement ||
-              node instanceof HTMLLinkElement
-            ) {
+            if (node instanceof HTMLStyleElement || node instanceof HTMLLinkElement) {
               const id =
                 (node as HTMLElement).getAttribute("data-vite-dev-id") ||
                 (node as HTMLLinkElement).href;
@@ -266,7 +260,7 @@ export class VePanelLayout extends HTMLElement {
           if (id) {
             const mirror = this._shadow.querySelector(
               `[data-mirror-id="${CSS.escape(id)}"]`,
-            ) as HTMLStyleElement | null;
+            );
             if (mirror) mirror.textContent = src.textContent;
           }
         }
@@ -280,22 +274,17 @@ export class VePanelLayout extends HTMLElement {
   }
 
   private _mirrorHeadStyles() {
-    const nodes = document.head.querySelectorAll<
-      HTMLStyleElement | HTMLLinkElement
-    >('style, link[rel="stylesheet"]');
+    const nodes = document.head.querySelectorAll<HTMLStyleElement | HTMLLinkElement>(
+      'style, link[rel="stylesheet"]',
+    );
     nodes.forEach((node) => this._mirrorStyleNode(node));
   }
 
   private _mirrorStyleNode(node: HTMLStyleElement | HTMLLinkElement) {
     const id =
-      node.getAttribute("data-vite-dev-id") ||
-      (node as HTMLLinkElement).href ||
-      "";
+      node.getAttribute("data-vite-dev-id") || (node as HTMLLinkElement).href || "";
     // Avoid duplicates
-    if (
-      id &&
-      this._shadow.querySelector(`[data-mirror-id="${CSS.escape(id)}"]`)
-    )
+    if (id && this._shadow.querySelector(`[data-mirror-id="${CSS.escape(id)}"]`))
       return;
 
     const clone = node.cloneNode(true) as HTMLElement;
@@ -347,10 +336,11 @@ export class VePanelLayout extends HTMLElement {
         return this._buildTabs(node);
       case "panel":
         return this._buildPanel(node);
-      default:
+      default: {
         const div = document.createElement("div");
-        div.textContent = `Unknown node type: ${node.type}`;
+        div.textContent = `Unknown node type: ${String(node.type)}`;
         return div;
+      }
     }
   }
 
@@ -465,7 +455,7 @@ export class VePanelLayout extends HTMLElement {
     header.addEventListener("dragover", (e) => {
       if (!e.dataTransfer?.types.includes("application/ve-panel-id")) return;
       e.preventDefault();
-      e.dataTransfer!.dropEffect = "move";
+      e.dataTransfer.dropEffect = "move";
       header.classList.add("drag-over");
       this._showTabDropIndicator(header, e.clientX);
     });
@@ -483,9 +473,7 @@ export class VePanelLayout extends HTMLElement {
       this._removeTabDropIndicator(header);
 
       const panelId = e.dataTransfer?.getData("application/ve-panel-id");
-      const sourceTabsId = e.dataTransfer?.getData(
-        "application/ve-source-tabs-id",
-      );
+      const sourceTabsId = e.dataTransfer?.getData("application/ve-source-tabs-id");
       if (!panelId) return;
 
       // Dropping on the same tabs container at the same position is a no-op check
@@ -576,9 +564,7 @@ export class VePanelLayout extends HTMLElement {
     });
 
     const label = document.createElement("span");
-    label.textContent = node.panelId
-      ? this._getPanelName(node.panelId)
-      : "Panel";
+    label.textContent = node.panelId ? this._getPanelName(node.panelId) : "Panel";
     tab.appendChild(label);
 
     const closeBtn = document.createElement("span");
@@ -605,7 +591,7 @@ export class VePanelLayout extends HTMLElement {
     header.addEventListener("dragover", (e) => {
       if (!e.dataTransfer?.types.includes("application/ve-panel-id")) return;
       e.preventDefault();
-      e.dataTransfer!.dropEffect = "move";
+      e.dataTransfer.dropEffect = "move";
       header.classList.add("drag-over");
       this._showTabDropIndicator(header, e.clientX);
     });
@@ -705,16 +691,16 @@ export class VePanelLayout extends HTMLElement {
     });
 
     // Prevent text selection during resize
-    document.body.style.cursor =
-      direction === "row" ? "col-resize" : "row-resize";
+    document.body.style.cursor = direction === "row" ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
   }
 
-  private _onMouseMove(e: MouseEvent) {
+  // Arrow-function fields so the listener identity is stable without a
+  // constructor bind, and `this` can't be lost when detached.
+  private _onMouseMove = (e: MouseEvent) => {
     if (!this._resizing || !this._resizeData || !this._layout) return;
 
-    const { index, direction, startPos, startSizes, containerSize } =
-      this._resizeData;
+    const { index, direction, startPos, startSizes, containerSize } = this._resizeData;
     const currentPos = direction === "row" ? e.clientX : e.clientY;
     const delta = currentPos - startPos;
     const deltaPercent = (delta / containerSize) * 100;
@@ -731,9 +717,9 @@ export class VePanelLayout extends HTMLElement {
       this._updateNodeSizes(this._layout, this._resizeData.nodeId, newSizes);
       this._render();
     }
-  }
+  };
 
-  private _onMouseUp() {
+  private _onMouseUp = () => {
     if (!this._resizing) return;
     this._resizing = false;
     this._resizeData = null;
@@ -748,7 +734,7 @@ export class VePanelLayout extends HTMLElement {
         detail: { layout: JSON.parse(JSON.stringify(this._layout)) },
       }),
     );
-  }
+  };
 
   private _updateNodeSizes(
     node: LayoutNode,
@@ -801,9 +787,7 @@ export class VePanelLayout extends HTMLElement {
   private _showTabDropIndicator(header: HTMLElement, clientX: number) {
     this._removeTabDropIndicator(header);
 
-    const tabs = Array.from(
-      header.querySelectorAll<HTMLElement>(".layout-tab"),
-    );
+    const tabs = Array.from(header.querySelectorAll<HTMLElement>(".layout-tab"));
     const indicator = document.createElement("div");
     indicator.className = "layout-tab-drop-indicator";
 
@@ -829,9 +813,7 @@ export class VePanelLayout extends HTMLElement {
   }
 
   private _getTabInsertIndex(header: HTMLElement, clientX: number): number {
-    const tabs = Array.from(
-      header.querySelectorAll<HTMLElement>(".layout-tab"),
-    );
+    const tabs = Array.from(header.querySelectorAll<HTMLElement>(".layout-tab"));
     for (let i = 0; i < tabs.length; i++) {
       const rect = tabs[i].getBoundingClientRect();
       if (clientX < rect.left + rect.width / 2) {
@@ -842,9 +824,7 @@ export class VePanelLayout extends HTMLElement {
   }
 
   private _clearAllDropIndicators() {
-    const indicators = this._shadow.querySelectorAll(
-      ".layout-tab-drop-indicator",
-    );
+    const indicators = this._shadow.querySelectorAll(".layout-tab-drop-indicator");
     indicators.forEach((el) => el.remove());
 
     const dragOvers = this._shadow.querySelectorAll(".drag-over");

@@ -1,5 +1,6 @@
 import { createStore } from "solid-js/store";
 import { loadState, createPersistEffect } from "@/lib/persist";
+import { mediaState } from "@/stores/media-store";
 
 const PROJECT_KEY = "project";
 
@@ -14,12 +15,7 @@ export interface MediaItem {
   fileHandle?: FileSystemFileHandle;
 }
 
-export type KeyframeEasing =
-  | "linear"
-  | "ease-in"
-  | "ease-out"
-  | "ease-in-out"
-  | "hold";
+export type KeyframeEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out" | "hold";
 
 export interface Keyframe {
   id: string;
@@ -170,28 +166,24 @@ function loadProjectState(): ProjectState {
   };
 }
 
-const [projectState, setProjectState] =
-  createStore<ProjectState>(loadProjectState());
+const [projectState, setProjectState] = createStore<ProjectState>(loadProjectState());
 
 /** Call once inside a reactive root (e.g. App onMount) to enable auto-save. */
 export function initProjectPersistence(): void {
-  createPersistEffect(
-    PROJECT_KEY,
-    (): PersistedProjectState => ({
-      name: projectState.name,
-      tracks: projectState.tracks.map((t) => ({
-        ...t,
-        clips: t.clips.map((c) => ({ ...c })),
-      })),
-      media: projectState.media.map(
-        ({ fileHandle, ...rest }) => rest as MediaItem,
-      ),
-      duration: projectState.duration,
-      fps: projectState.fps,
-      width: projectState.width,
-      height: projectState.height,
-    }),
-  );
+  createPersistEffect(PROJECT_KEY, (): PersistedProjectState => ({
+    name: projectState.name,
+    tracks: projectState.tracks.map((t) => ({
+      ...t,
+      clips: t.clips.map((c) => ({ ...c })),
+    })),
+    media: projectState.media.map(
+      ({ fileHandle: _fileHandle, ...rest }) => rest as MediaItem,
+    ),
+    duration: projectState.duration,
+    fps: projectState.fps,
+    width: projectState.width,
+    height: projectState.height,
+  }));
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────
@@ -236,43 +228,46 @@ export function addClipToTrack(
     setProjectState("duration", newEnd + 30); // pad 30s
   }
 
-  // Preload frame source for preview rendering
-  import("@/stores/media-store").then(({ mediaState }) => {
-    const entry = mediaState.entries.find((e: any) => e.id === mediaId);
-    if (entry) {
-      import("@/renderer/frame-source").then(({ getFrameSource }) => {
-        getFrameSource(entry).catch(() => {});
-      });
-    }
-  });
+  const entry = mediaState.entries.find((e) => e.id === mediaId);
 
-  // Auto-create linked audio clip when a video with audio is added to a video track
-  if (track?.type === "video" && mediaId !== "__text__") {
-    import("@/stores/media-store").then(({ mediaState }) => {
-      const entry = mediaState.entries.find((e: any) => e.id === mediaId);
-      if (entry?.hasAudio || entry?.type === "video") {
-        // Find first audio track
-        const audioTrack = projectState.tracks.find((t) => t.type === "audio");
-        if (audioTrack) {
-          const audioClip: Clip = {
-            id: `clip-${Date.now()}-${clipIdCounter++}`,
-            mediaId,
-            trackId: audioTrack.id,
-            startTime: st,
-            duration,
-            inPoint: 0,
-            outPoint: duration,
-            effects: [],
-          };
-          setProjectState(
-            "tracks",
-            (t) => t.id === audioTrack.id,
-            "clips",
-            (clips) => [...clips, audioClip],
-          );
-        }
-      }
+  // Preload the frame source so the preview has something to draw. A store
+  // reaching into the renderer is the wrong layering; the media engine takes
+  // this over and this call goes away with it.
+  if (entry) {
+    void import("@/renderer/frame-source").then(({ getFrameSource }) => {
+      void getFrameSource(entry).catch(() => {});
     });
+  }
+
+  // Auto-create a linked audio clip when a video is added to a video track.
+  //
+  // This duplicate clip is why export mixes every video's audio twice at 2x
+  // amplitude: the offline mixdown sums all tracks with no type filter, so it
+  // picks up both the video clip and its phantom twin. The fix is a
+  // `linkedAudio` flag on the video clip plus a real "Detach Audio" command,
+  // which lands with the audio engine.
+  if (track?.type === "video" && mediaId !== "__text__") {
+    if (entry?.hasAudio || entry?.type === "video") {
+      const audioTrack = projectState.tracks.find((t) => t.type === "audio");
+      if (audioTrack) {
+        const audioClip: Clip = {
+          id: `clip-${Date.now()}-${clipIdCounter++}`,
+          mediaId,
+          trackId: audioTrack.id,
+          startTime: st,
+          duration,
+          inPoint: 0,
+          outPoint: duration,
+          effects: [],
+        };
+        setProjectState(
+          "tracks",
+          (t) => t.id === audioTrack.id,
+          "clips",
+          (clips) => [...clips, audioClip],
+        );
+      }
+    }
   }
 
   return clip;
@@ -287,11 +282,7 @@ export function removeClip(trackId: string, clipId: string): void {
   );
 }
 
-export function moveClip(
-  trackId: string,
-  clipId: string,
-  newStartTime: number,
-): void {
+export function moveClip(trackId: string, clipId: string, newStartTime: number): void {
   setProjectState(
     "tracks",
     (t) => t.id === trackId,
@@ -366,7 +357,6 @@ export function trimClipLeft(
   const clip = track?.clips.find((c) => c.id === clipId);
   if (!clip) return;
 
-  const minStart = clip.startTime + clip.inPoint;
   const maxStart = clip.startTime + clip.duration - 0.1;
   const clamped = Math.max(
     Math.min(newStartTime, maxStart),
@@ -460,10 +450,7 @@ export function snapToNearest(
       // Don't snap to own edges
       for (const track of projectState.tracks) {
         const clip = track.clips.find((c) => c.id === excludeClipId);
-        if (
-          clip &&
-          (p === clip.startTime || p === clip.startTime + clip.duration)
-        ) {
+        if (clip && (p === clip.startTime || p === clip.startTime + clip.duration)) {
           return false;
         }
       }
@@ -501,10 +488,7 @@ export function addTrack(type: "video" | "audio"): Track {
 export function reorderTrack(trackId: string, toIndex: number): void {
   const fromIndex = projectState.tracks.findIndex((t) => t.id === trackId);
   if (fromIndex === -1 || fromIndex === toIndex) return;
-  const clamped = Math.max(
-    0,
-    Math.min(toIndex, projectState.tracks.length - 1),
-  );
+  const clamped = Math.max(0, Math.min(toIndex, projectState.tracks.length - 1));
   setProjectState("tracks", (prev) => {
     const next = [...prev];
     const [moved] = next.splice(fromIndex, 1);
@@ -619,15 +603,11 @@ function mutateEffectKeyframes(
   trackId: string,
   clipId: string,
   effectId: string,
-  updater: (
-    keyframes: Record<string, Keyframe[]>,
-  ) => Record<string, Keyframe[]>,
+  updater: (keyframes: Record<string, Keyframe[]>) => Record<string, Keyframe[]>,
 ): void {
   const trackIdx = projectState.tracks.findIndex((t) => t.id === trackId);
   if (trackIdx === -1) return;
-  const clipIdx = projectState.tracks[trackIdx].clips.findIndex(
-    (c) => c.id === clipId,
-  );
+  const clipIdx = projectState.tracks[trackIdx].clips.findIndex((c) => c.id === clipId);
   if (clipIdx === -1) return;
   const fxArr = projectState.tracks[trackIdx].clips[clipIdx].effects;
   const effectIdx = fxArr.findIndex((e) => e.id === effectId);

@@ -1,7 +1,7 @@
 import { Component, For, Show, createSignal } from "solid-js";
 import { EFFECT_DEFINITIONS } from "@/renderer/effects-pipeline";
 import { timelineState } from "@/stores/timeline-store";
-import { projectState, addEffectToClip } from "@/stores/project-store";
+import { addEffectToClip, removeEffectFromClip } from "@/stores/project-store";
 import { pushAction } from "@/stores/history-store";
 
 const effectIcons: Record<string, string> = {
@@ -26,9 +26,7 @@ const EffectsPanel: Component = () => {
 
   const filteredEffects = () => {
     return EFFECT_DEFINITIONS.filter((e) => {
-      const matchesSearch = e.name
-        .toLowerCase()
-        .includes(search().toLowerCase());
+      const matchesSearch = e.name.toLowerCase().includes(search().toLowerCase());
       const matchesCategory =
         selectedCategory() === "All" || e.category === selectedCategory();
       return matchesSearch && matchesCategory;
@@ -50,20 +48,11 @@ const EffectsPanel: Component = () => {
     }
 
     for (const ref of timelineState.selectedClips) {
-      const effect = addEffectToClip(
-        ref.trackId,
-        ref.clipId,
-        definitionId,
-        defaults,
-      );
+      const effect = addEffectToClip(ref.trackId, ref.clipId, definitionId, defaults);
       pushAction(
         `Add ${def.name}`,
         effectIcons[definitionId] || "✨",
-        () => {
-          import("@/stores/project-store").then(({ removeEffectFromClip }) => {
-            removeEffectFromClip(ref.trackId, ref.clipId, effect.id);
-          });
-        },
+        () => removeEffectFromClip(ref.trackId, ref.clipId, effect.id),
         () => addEffectToClip(ref.trackId, ref.clipId, definitionId, defaults),
       );
     }
@@ -110,9 +99,7 @@ const EffectsPanel: Component = () => {
                   ? "hover:bg-accent cursor-pointer"
                   : "opacity-50 cursor-default"
               }`}
-              onDblClick={() => applyEffectToSelection(effect.id)}
               onClick={() => {
-                // Single click applies if selection exists
                 if (hasSelection()) applyEffectToSelection(effect.id);
               }}
               title={
@@ -123,12 +110,8 @@ const EffectsPanel: Component = () => {
             >
               <span class="text-base">{effectIcons[effect.id] || "✨"}</span>
               <div class="flex flex-col">
-                <span class="text-xs font-medium text-foreground">
-                  {effect.name}
-                </span>
-                <span class="text-[10px] text-muted-foreground">
-                  {effect.category}
-                </span>
+                <span class="text-xs font-medium text-foreground">{effect.name}</span>
+                <span class="text-[10px] text-muted-foreground">{effect.category}</span>
               </div>
             </div>
           )}

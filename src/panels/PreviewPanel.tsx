@@ -1,9 +1,5 @@
 import { Component, onMount, onCleanup, createSignal } from "solid-js";
-import {
-  projectState,
-  setPlayhead,
-  togglePlayback,
-} from "@/stores/project-store";
+import { projectState, setPlayhead, togglePlayback } from "@/stores/project-store";
 import {
   createCompositor,
   disposeCompositor,
@@ -88,9 +84,7 @@ const PreviewPanel: Component = () => {
         </button>
         <button
           class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-          onClick={() =>
-            setPlayhead(Math.max(0, projectState.playheadPosition - 5))
-          }
+          onClick={() => setPlayhead(Math.max(0, projectState.playheadPosition - 5))}
           title="Rewind 5s (J)"
         >
           ⏪
@@ -110,10 +104,7 @@ const PreviewPanel: Component = () => {
           class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
           onClick={() =>
             setPlayhead(
-              Math.min(
-                projectState.duration,
-                projectState.playheadPosition + 5,
-              ),
+              Math.min(projectState.duration, projectState.playheadPosition + 5),
             )
           }
           title="Forward 5s (L)"
@@ -136,7 +127,7 @@ const PreviewPanel: Component = () => {
           onClick={() => {
             if (canvasRef) {
               if (document.fullscreenElement) {
-                document.exitFullscreen();
+                void document.exitFullscreen();
               } else {
                 canvasRef.requestFullscreen().catch(() => {});
               }

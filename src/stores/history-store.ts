@@ -32,7 +32,12 @@ const [historyState, setHistoryState] = createStore<HistoryState>({
 
 const MAX_HISTORY = 100;
 
-export function pushAction(action: string, icon: string, undo: () => void, redo: () => void): void {
+export function pushAction(
+  action: string,
+  icon: string,
+  undo: () => void,
+  redo: () => void,
+): void {
   const entry: HistoryEntry = {
     id: nextId++,
     action,

@@ -4,12 +4,7 @@
  * Effects are chained via ping-pong framebuffers.
  */
 
-import {
-  createProgram,
-  createFramebuffer,
-  drawQuad,
-  FBO_VERTEX,
-} from "./gl-utils";
+import { createProgram, createFramebuffer, drawQuad, FBO_VERTEX } from "./gl-utils";
 
 // ── Effect definitions ──────────────────────────────────────────────
 
@@ -409,14 +404,8 @@ function getCompiledEffect(
   const uniformLocations = new Map<string, WebGLUniformLocation | null>();
 
   // Cache standard uniforms
-  uniformLocations.set(
-    "u_texture",
-    gl.getUniformLocation(program, "u_texture"),
-  );
-  uniformLocations.set(
-    "u_resolution",
-    gl.getUniformLocation(program, "u_resolution"),
-  );
+  uniformLocations.set("u_texture", gl.getUniformLocation(program, "u_texture"));
+  uniformLocations.set("u_resolution", gl.getUniformLocation(program, "u_resolution"));
 
   // Cache effect-specific uniforms
   for (const u of def.uniforms) {
@@ -536,8 +525,7 @@ export function applyEffects(
 
     // Set resolution
     const resLoc = compiled.uniformLocations.get("u_resolution");
-    if (resLoc !== null && resLoc !== undefined)
-      gl.uniform2f(resLoc, width, height);
+    if (resLoc !== null && resLoc !== undefined) gl.uniform2f(resLoc, width, height);
 
     // Set effect uniforms
     for (const u of def.uniforms) {

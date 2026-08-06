@@ -80,11 +80,7 @@ void main() {
 
 // ── Transition types ────────────────────────────────────────────────
 
-export type TransitionType =
-  | "crossfade"
-  | "dip-to-black"
-  | "wipe-left"
-  | "wipe-right";
+export type TransitionType = "crossfade" | "dip-to-black" | "wipe-left" | "wipe-right";
 
 export interface TransitionDefinition {
   id: TransitionType;

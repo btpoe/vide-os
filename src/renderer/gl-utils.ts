@@ -58,8 +58,7 @@ export function createFullscreenQuad(
   // Position + UV interleaved (V is flipped so video/canvas top-left origin maps correctly)
   const vertices = new Float32Array([
     // x,    y,   u,   v
-    -1.0, -1.0, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0,
-    1.0, 0.0,
+    -1.0, -1.0, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0,
   ]);
 
   const vbo = gl.createBuffer();

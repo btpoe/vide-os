@@ -10,7 +10,7 @@
 
 import { projectState, type Clip, type Track } from "@/stores/project-store";
 import { mediaState } from "@/stores/media-store";
-import { getCachedFrameSource, type FrameSource } from "./frame-source";
+import { getCachedFrameSource } from "./frame-source";
 
 /** Set of mediaIds currently playing audio. */
 const activeAudio = new Set<string>();

@@ -37,7 +37,7 @@ import {
   type Clip,
   type Track,
 } from "@/stores/project-store";
-import { mediaState, type MediaEntry } from "@/stores/media-store";
+import { mediaState } from "@/stores/media-store";
 
 // ── Compositing shader (blends layer on top of existing content) ────
 
@@ -133,11 +133,7 @@ export function createCompositor(canvas: HTMLCanvasElement): Compositor | null {
     PASSTHROUGH_VERTEX,
     PASSTHROUGH_FRAGMENT,
   );
-  const compositeProgram = createProgram(
-    gl,
-    PASSTHROUGH_VERTEX,
-    COMPOSITE_FRAGMENT,
-  );
+  const compositeProgram = createProgram(gl, PASSTHROUGH_VERTEX, COMPOSITE_FRAGMENT);
   const fitProgram = createProgram(gl, PASSTHROUGH_VERTEX, FIT_FRAGMENT);
 
   const sourceTexture = createTexture(gl);
@@ -199,12 +195,9 @@ export function resizeCompositor(
  * Render a single frame at the given time.
  * Composites all visible video tracks from bottom to top.
  */
-export async function renderFrame(
-  comp: Compositor,
-  time: number,
-): Promise<void> {
+export async function renderFrame(comp: Compositor, time: number): Promise<void> {
   if (comp.disposed) return;
-  const { gl, width, height, quad } = comp;
+  const { gl, width, height } = comp;
 
   comp.pipeline.time = time;
 
@@ -227,7 +220,7 @@ export async function renderFrame(
     if (!mediaEntry) continue;
 
     // Get frame source
-    let source = getCachedFrameSource(clip.mediaId);
+    const source = getCachedFrameSource(clip.mediaId);
     if (!source) {
       // Try to load it (async, will be available next frame)
       getFrameSource(mediaEntry).catch(() => {});
@@ -338,7 +331,7 @@ async function uploadFrameToTexture(
     await seekFrameSource(source, mediaTime);
     uploadTexture(gl, sourceTexture, video);
   } else if (source.type === "image" && source.element) {
-    uploadTexture(gl, sourceTexture, source.element as HTMLImageElement);
+    uploadTexture(gl, sourceTexture, source.element);
   } else {
     // Black frame
     uploadSolidColor(gl, sourceTexture, 0, 0, 0);
@@ -346,8 +339,7 @@ async function uploadFrameToTexture(
 }
 
 function renderFittedLayer(comp: Compositor, source: FrameSource): void {
-  const { gl, fitProgram, quad, sourceTexture, layerBuffer, width, height } =
-    comp;
+  const { gl, fitProgram, quad, sourceTexture, layerBuffer, width, height } = comp;
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, layerBuffer.fbo);
   gl.viewport(0, 0, width, height);
