@@ -1,102 +1,85 @@
-import { createStore } from "solid-js/store";
+/**
+ * Undo history, as seen by the UI.
+ *
+ * The real history lives in `model/history.ts` as document snapshots and is
+ * driven by the project store — every operation there records its own step.
+ * This module is now only a read-side view for the History panel plus the
+ * undo/redo commands.
+ *
+ * `pushAction` used to be how each mutation registered a hand-written inverse.
+ * It no longer needs to exist: snapshots cannot be wrong, and three of those
+ * inverses were. It is kept as a no-op that complains in development, so a
+ * missed call site is noticed rather than silently adding a second, broken
+ * entry beside the real one.
+ */
+
+import {
+  canRedo as storeCanRedo,
+  canUndo as storeCanUndo,
+  goToEntry as storeGoToEntry,
+  historyEntries,
+  redo as storeRedo,
+  undo as storeUndo,
+} from "@/stores/project-store";
 
 export interface HistoryEntry {
-  id: number;
   action: string;
   icon: string;
   timestamp: number;
-  undo: () => void;
-  redo: () => void;
 }
 
-export interface HistoryState {
+export interface HistoryView {
   entries: HistoryEntry[];
+  /** Position in `entries`; anything at or after it is redoable. */
   currentIndex: number;
 }
 
-let nextId = 1;
-
-const [historyState, setHistoryState] = createStore<HistoryState>({
-  entries: [
-    {
-      id: 0,
-      action: "Project Created",
-      icon: "📄",
-      timestamp: Date.now(),
-      undo: () => {},
-      redo: () => {},
-    },
-  ],
-  currentIndex: 0,
-});
-
-const MAX_HISTORY = 100;
-
-export function pushAction(
-  action: string,
-  icon: string,
-  undo: () => void,
-  redo: () => void,
-): void {
-  const entry: HistoryEntry = {
-    id: nextId++,
-    action,
-    icon,
-    timestamp: Date.now(),
-    undo,
-    redo,
+/** Reactive view of the undo stack, for the History panel. */
+export function historyState(): HistoryView {
+  const { entries, currentIndex } = historyEntries();
+  return {
+    entries: entries.map((entry) => ({
+      action: entry.label,
+      icon: entry.icon,
+      timestamp: entry.at,
+    })),
+    currentIndex,
   };
-
-  // Truncate any redo entries beyond current index
-  const truncated = historyState.entries.slice(0, historyState.currentIndex + 1);
-  const newEntries = [...truncated, entry].slice(-MAX_HISTORY);
-
-  setHistoryState({
-    entries: newEntries,
-    currentIndex: newEntries.length - 1,
-  });
 }
 
 export function undo(): boolean {
-  if (historyState.currentIndex <= 0) return false;
-  const entry = historyState.entries[historyState.currentIndex];
-  entry.undo();
-  setHistoryState("currentIndex", historyState.currentIndex - 1);
-  return true;
+  return storeUndo();
 }
 
 export function redo(): boolean {
-  if (historyState.currentIndex >= historyState.entries.length - 1) return false;
-  const nextEntry = historyState.entries[historyState.currentIndex + 1];
-  nextEntry.redo();
-  setHistoryState("currentIndex", historyState.currentIndex + 1);
-  return true;
+  return storeRedo();
 }
 
 export function canUndo(): boolean {
-  return historyState.currentIndex > 0;
+  return storeCanUndo();
 }
 
 export function canRedo(): boolean {
-  return historyState.currentIndex < historyState.entries.length - 1;
+  return storeCanRedo();
 }
 
 export function goToEntry(index: number): void {
-  if (index < 0 || index >= historyState.entries.length) return;
-  if (index === historyState.currentIndex) return;
-
-  if (index < historyState.currentIndex) {
-    // Undo steps
-    for (let i = historyState.currentIndex; i > index; i--) {
-      historyState.entries[i].undo();
-    }
-  } else {
-    // Redo steps
-    for (let i = historyState.currentIndex + 1; i <= index; i++) {
-      historyState.entries[i].redo();
-    }
-  }
-  setHistoryState("currentIndex", index);
+  storeGoToEntry(index);
 }
 
-export { historyState, setHistoryState };
+/**
+ * @deprecated Every project-store operation records its own undo step, so this
+ * does nothing. Remove the call.
+ */
+export function pushAction(
+  action: string,
+  _icon: string,
+  _undoFn: () => void,
+  _redoFn: () => void,
+): void {
+  if (import.meta.env?.DEV) {
+    console.warn(
+      `pushAction(${JSON.stringify(action)}) is obsolete — the edit already recorded an undo step. Remove this call.`,
+    );
+  }
+}

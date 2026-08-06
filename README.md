@@ -22,10 +22,12 @@ Specifically, as of now:
 | **Export**                                  | **Produces wrong output.** Frames are timestamped by wall-clock render time rather than by frame index, so a 60 s timeline can export as several minutes of slow motion, with audio out of sync.             |
 | Audio                                       | Mute/unmute only. No per-clip volume, fades, or pan. Audio-only files are silent in preview.                                                                                                                 |
 | Effects + keyframes                         | Render in preview and export                                                                                                                                                                                 |
+| Undo / redo                                 | Works. Document snapshots, so every edit undoes and redoes exactly.                                                                                                                                          |
+| Save / open                                 | Works. `.videos` bundles are portable and carry a media table; older `.videos.json` files migrate on open.                                                                                                   |
 | Transitions                                 | Data model and UI exist; the renderer never draws them                                                                                                                                                       |
 | Titles / text clips                         | Data model and editor exist; the compositor has no text path                                                                                                                                                 |
-| Transform / opacity / crop                  | Not implemented                                                                                                                                                                                              |
-| Media persistence                           | Fragile — a lapsed permission deletes the stored file handle, and project files contain no media list, so they are not portable                                                                              |
+| Transform / opacity / crop                  | Modelled but not rendered                                                                                                                                                                                    |
+| Media persistence                           | File handles are no longer destroyed by a failed permission check, but there is still no relink UI, so moved media stays offline                                                                             |
 
 Nothing in the UI claims to do something it doesn't: unimplemented controls are
 disabled or labelled, not silently inert.
@@ -60,18 +62,42 @@ pnpm dev          # http://localhost:5173
 
 ```
 src/
+  model/           the project document: types, edit operations,
+                   invariants, snapshot undo, file format, migration.
+                   Pure — no Solid, no DOM.
+  platform/        the boundary to the host: file access, persistent
+                   handles, cache. `web/` is the only place that touches
+                   FileSystemFileHandle.
   commands/        every user-triggerable action; menus, buttons and
                    shortcuts all dispatch through here
   panels/          one Solid component per dockable panel
   renderer/        WebGL2 compositor, effect and transition shaders
-  stores/          Solid stores: project document, UI layout, media,
-                   timeline interaction, undo history
-  lib/             filesystem access, waveforms, thumbnails, persistence
+  stores/          Solid wiring over the model, plus UI layout, media,
+                   and timeline interaction state
+  lib/             timecode, keyframe evaluation, filesystem helpers,
+                   waveforms, thumbnails
   web-components/  <ve-panel> and <ve-panel-layout>, the docking system
 test/
   unit/            Node-mode tests
   browser/         tests needing real WebGL2 / WebCodecs
 ```
+
+### The document
+
+`src/model/doc.ts` is the source of truth. All times are **integer frames**
+and the frame rate is **rational** (`{num: 30000, den: 1001}` for 29.97) —
+float seconds made split and trim approximate and drifted over long timelines.
+Media is referenced by a **content key** derived from the file's bytes, which
+is what makes a saved project reopenable on another machine.
+
+Edits go through `applyEdit`, which mutates a draft, validates the result
+against the document invariants in development, and records one undo step.
+Undo is a document snapshot with structural sharing, not a hand-written
+inverse.
+
+`stores/project-store.ts` also exposes a **compatibility projection** of the
+document in the older seconds-based shape, so the timeline and renderer keep
+working until their own rewrites land. It is temporary and marked as such.
 
 ### Commands
 

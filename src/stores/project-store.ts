@@ -1,25 +1,86 @@
-import { createStore } from "solid-js/store";
+/**
+ * The project store.
+ *
+ * `ProjectDoc` plus snapshot history is the single source of truth. Every
+ * mutation goes through `applyEdit`, so every mutation is undoable and every
+ * mutation is validated.
+ *
+ * ## The compatibility view
+ *
+ * `projectState` is a *projection* of the document into the shape the existing
+ * panels and renderer expect: seconds instead of frames, `type` instead of
+ * `kind`, transitions hanging off the right-hand clip, titles as a
+ * `textOverlay` on a `"__text__"` clip. It is rebuilt and reconciled whenever
+ * the document changes.
+ *
+ * This exists so the model rewrite does not have to land at the same time as
+ * the timeline and renderer rewrites. It is deliberately temporary: as each
+ * consumer is rebuilt it should move to `doc()` and the frame-based API, and
+ * when the last one has, this projection and everything marked "compat" below
+ * goes away.
+ *
+ * Writing to the projection does nothing useful — it is overwritten on the next
+ * document change. Use the exported operations.
+ */
+
+import { createStore, produce, reconcile } from "solid-js/store";
+import { createSignal, createEffect, batch } from "solid-js";
+import {
+  type ProjectDoc,
+  type Track as DocTrack,
+  type Clip as DocClip,
+  type Asset,
+  type TransitionType,
+  type TextStyle,
+  createEmptyDoc,
+  contentEndFrame,
+  snapFrames,
+  clipEndFrame,
+  findClip,
+} from "@/model/doc";
+import * as edits from "@/model/edits";
+import {
+  type HistoryState,
+  type ApplyOptions,
+  createHistory,
+  applyEdit as applyEditToHistory,
+  beginInteraction as beginInteractionOn,
+  commitInteraction as commitInteractionOn,
+  abortInteraction as abortInteractionOn,
+  undo as undoHistory,
+  redo as redoHistory,
+  canUndo as historyCanUndo,
+  canRedo as historyCanRedo,
+  historyEntries as listHistoryEntries,
+  goToEntry as goToHistoryEntry,
+  resetHistory,
+} from "@/model/history";
+import {
+  type Animatable,
+  type Keyframe as DocKeyframe,
+  evaluate,
+  setKey,
+  removeKey as removeAnimKey,
+  clearKeys,
+  EASING_PRESETS,
+} from "@/lib/animation";
+import {
+  framesToSeconds,
+  secondsToFrames,
+  frameRateToNumber,
+  type FrameRate,
+} from "@/lib/timecode";
+import { newId } from "@/model/ids";
 import { loadState, createPersistEffect } from "@/lib/persist";
-import { mediaState } from "@/stores/media-store";
 
-const PROJECT_KEY = "project";
-
-export interface MediaItem {
-  id: string;
-  name: string;
-  type: "video" | "audio" | "image";
-  path: string;
-  duration?: number;
-  width?: number;
-  height?: number;
-  fileHandle?: FileSystemFileHandle;
-}
+// ── Compatibility types (unchanged shapes the panels still use) ───────
 
 export type KeyframeEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out" | "hold";
 
 export interface Keyframe {
   id: string;
-  time: number; // seconds relative to clip start
+  /** Seconds relative to the clip's start. */
+  time: number;
   value: number;
   easing: KeyframeEasing;
 }
@@ -28,23 +89,23 @@ export interface ClipEffect {
   id: string;
   definitionId: string;
   values: Record<string, number | number[]>;
-  keyframes: Record<string, Keyframe[]>; // uniformName -> sorted keyframes
+  keyframes: Record<string, Keyframe[]>;
 }
 
 export interface ClipTransition {
-  type: "crossfade" | "dip-to-black" | "wipe-left" | "wipe-right";
-  duration: number; // seconds
+  type: TransitionType;
+  duration: number;
 }
 
 export interface TextOverlay {
   text: string;
   fontFamily: string;
-  fontSize: number; // px
+  fontSize: number;
   fontWeight: "normal" | "bold";
-  color: string; // hex
+  color: string;
   backgroundColor?: string;
-  x: number; // 0..1 normalized position
-  y: number; // 0..1 normalized position
+  x: number;
+  y: number;
   align: "left" | "center" | "right";
 }
 
@@ -57,8 +118,8 @@ export interface Clip {
   inPoint: number;
   outPoint: number;
   effects: ClipEffect[];
-  transition?: ClipTransition; // transition INTO this clip from the previous one
-  textOverlay?: TextOverlay; // for title/text clips (mediaId = "__text__")
+  transition?: ClipTransition;
+  textOverlay?: TextOverlay;
 }
 
 export interface Track {
@@ -73,7 +134,6 @@ export interface Track {
 export interface ProjectState {
   name: string;
   tracks: Track[];
-  media: MediaItem[];
   duration: number;
   playheadPosition: number;
   isPlaying: boolean;
@@ -82,214 +142,328 @@ export interface ProjectState {
   height: number;
 }
 
-/** Fields persisted to localStorage (excludes transient playback state). */
-interface PersistedProjectState {
-  name: string;
-  tracks: Track[];
-  media: MediaItem[];
-  duration: number;
-  fps: number;
-  width: number;
-  height: number;
+/** Sentinel media id the old code used for titles. */
+export const TEXT_CLIP_MEDIA_ID = "__text__";
+
+// ── Document state ────────────────────────────────────────────────────
+
+const PROJECT_KEY = "project-doc";
+
+function loadInitialDoc(): ProjectDoc {
+  const saved = loadState<ProjectDoc>(PROJECT_KEY);
+  if (!saved) return createEmptyDoc();
+  try {
+    // Autosaved documents are already current-format; a bad one should not
+    // prevent the app from starting.
+    if (saved.formatVersion === createEmptyDoc().formatVersion) return saved;
+  } catch {
+    // fall through
+  }
+  return createEmptyDoc();
 }
 
-function getDefaultProjectState(): ProjectState {
-  return {
-    name: "Untitled Project",
-    tracks: [
-      {
-        id: "v1",
-        name: "Video 1",
-        type: "video",
-        clips: [],
-        muted: false,
-        locked: false,
-      },
-      {
-        id: "v2",
-        name: "Video 2",
-        type: "video",
-        clips: [],
-        muted: false,
-        locked: false,
-      },
-      {
-        id: "a1",
-        name: "Audio 1",
-        type: "audio",
-        clips: [],
-        muted: false,
-        locked: false,
-      },
-      {
-        id: "a2",
-        name: "Audio 2",
-        type: "audio",
-        clips: [],
-        muted: false,
-        locked: false,
-      },
-    ],
-    media: [],
-    duration: 300,
-    playheadPosition: 0,
-    isPlaying: false,
-    fps: 30,
-    width: 1920,
-    height: 1080,
+const [history, setHistory] = createSignal<HistoryState>(
+  createHistory(loadInitialDoc()),
+);
+
+/** The current document. Read this in new code. */
+export function doc(): ProjectDoc {
+  return history().present;
+}
+
+export function sequenceFrameRate(): FrameRate {
+  return doc().sequence.frameRate;
+}
+
+// ── Transient playback state ──────────────────────────────────────────
+// Not part of the document: a playhead position is not an edit and must not
+// be undoable.
+
+const [playheadFrame, setPlayheadFrameSignal] = createSignal(0);
+const [isPlaying, setIsPlaying] = createSignal(false);
+
+export { playheadFrame, isPlaying };
+
+export function setPlayheadFrame(frame: number): void {
+  setPlayheadFrameSignal(Math.max(0, Math.round(frame)));
+}
+
+// ── Edits ─────────────────────────────────────────────────────────────
+
+/**
+ * Applies an edit and records one undo step.
+ *
+ * `recipe` mutates a draft of the document; its return value is ignored.
+ */
+export function applyEdit(
+  label: string,
+  recipe: (draft: ProjectDoc) => unknown,
+  options: ApplyOptions = {},
+): void {
+  setHistory((state) => applyEditToHistory(state, label, recipe, options));
+}
+
+/** Starts a drag or trim. Edits until `commitInteraction` become one step. */
+export function beginInteraction(): void {
+  setHistory((state) => beginInteractionOn(state));
+}
+
+export function commitInteraction(label: string, icon = "✏️"): void {
+  setHistory((state) => commitInteractionOn(state, label, { icon }));
+}
+
+export function abortInteraction(): void {
+  setHistory((state) => abortInteractionOn(state));
+}
+
+export function undo(): boolean {
+  const before = history();
+  setHistory(undoHistory(before));
+  return history() !== before;
+}
+
+export function redo(): boolean {
+  const before = history();
+  setHistory(redoHistory(before));
+  return history() !== before;
+}
+
+export function canUndo(): boolean {
+  return historyCanUndo(history());
+}
+
+export function canRedo(): boolean {
+  return historyCanRedo(history());
+}
+
+export function historyEntries() {
+  return listHistoryEntries(history());
+}
+
+export function goToEntry(index: number): void {
+  setHistory((state) => goToHistoryEntry(state, index));
+}
+
+/** Replaces the document wholesale — opening a project, not an edit. */
+export function loadDocument(next: ProjectDoc): void {
+  batch(() => {
+    setHistory(resetHistory(next));
+    setPlayheadFrameSignal(0);
+    setIsPlaying(false);
+  });
+}
+
+export function newProject(): void {
+  loadDocument(createEmptyDoc());
+}
+
+// ── Assets ────────────────────────────────────────────────────────────
+
+export function upsertAsset(asset: Asset): void {
+  applyEdit(`Import ${asset.name}`, (d) => edits.upsertAsset(d, asset), {
+    icon: "📥",
+  });
+}
+
+export function assets(): readonly Asset[] {
+  return doc().assets;
+}
+
+// ── Compatibility projection ──────────────────────────────────────────
+
+function easingFromKeyframe(key: DocKeyframe<number | number[]>): KeyframeEasing {
+  if (key.interp === "hold") return "hold";
+  if (key.interp === "linear") return "linear";
+  // Bezier handles are matched back to the preset they came from so the old
+  // easing dropdown still shows something sensible.
+  const [ox, oy] = key.out ?? [0, 0];
+  for (const [name, preset] of Object.entries(EASING_PRESETS)) {
+    if (Math.abs(preset.out[0] - ox) < 0.01 && Math.abs(preset.out[1] - oy) < 0.01) {
+      return name as KeyframeEasing;
+    }
+  }
+  return "ease-in-out";
+}
+
+function projectEffects(clip: DocClip, rate: FrameRate): ClipEffect[] {
+  return clip.effects.map((effect) => {
+    const values: Record<string, number | number[]> = {};
+    const keyframes: Record<string, Keyframe[]> = {};
+
+    for (const [name, param] of Object.entries(effect.params)) {
+      values[name] = param.value;
+      if (param.keys?.length) {
+        keyframes[name] = param.keys.map((key) => ({
+          id: key.id,
+          time: framesToSeconds(key.timeFrames, rate),
+          value: typeof key.value === "number" ? key.value : 0,
+          easing: easingFromKeyframe(key),
+        }));
+      }
+    }
+
+    return { id: effect.id, definitionId: effect.definitionId, values, keyframes };
+  });
+}
+
+function projectClip(clip: DocClip, track: DocTrack, rate: FrameRate): Clip {
+  const startTime = framesToSeconds(clip.startFrame, rate);
+  const duration = framesToSeconds(clip.durationFrames, rate);
+  const inPoint = framesToSeconds(clip.inPointFrames, rate);
+
+  // Transitions are edges in the document; the old shape hangs them off the
+  // clip they transition into.
+  const incoming = track.transitions.find((t) => t.rightClipId === clip.id);
+
+  const projected: Clip = {
+    id: clip.id,
+    mediaId: clip.source.type === "asset" ? clip.source.assetId : TEXT_CLIP_MEDIA_ID,
+    trackId: track.id,
+    startTime,
+    duration,
+    inPoint,
+    outPoint: inPoint + duration * clip.speed,
+    effects: projectEffects(clip, rate),
   };
+
+  if (incoming) {
+    projected.transition = {
+      type: incoming.type,
+      duration: framesToSeconds(incoming.durationFrames, rate),
+    };
+  }
+  if (clip.source.type === "text") {
+    projected.textOverlay = { ...clip.source.style };
+  }
+  return projected;
 }
 
-function loadProjectState(): ProjectState {
-  const saved = loadState<PersistedProjectState>(PROJECT_KEY);
-  const defaults = getDefaultProjectState();
-  if (!saved) return defaults;
+/** Minimum timeline length, so percentage-based geometry never divides by zero. */
+const MIN_PROJECTED_DURATION_SEC = 60;
+const TAIL_PAD_SEC = 30;
 
+function projectDoc(
+  d: ProjectDoc,
+): Omit<ProjectState, "playheadPosition" | "isPlaying"> {
+  const rate = d.sequence.frameRate;
   return {
-    ...defaults,
-    name: saved.name ?? defaults.name,
-    tracks: (saved.tracks ?? defaults.tracks).map((t) => ({
-      ...t,
-      clips: t.clips.map((c) => ({
-        ...c,
-        effects: c.effects.map((e) => ({ ...e, keyframes: e.keyframes ?? {} })),
-      })),
+    name: d.name,
+    tracks: d.tracks.map((track) => ({
+      id: track.id,
+      name: track.name,
+      type: track.kind,
+      muted: track.muted,
+      locked: track.locked,
+      clips: track.clips.map((clip) => projectClip(clip, track, rate)),
     })),
-    media: (saved.media ?? []).map((m) => ({ ...m, fileHandle: undefined })),
-    duration: saved.duration ?? defaults.duration,
-    fps: saved.fps ?? defaults.fps,
-    width: saved.width ?? defaults.width,
-    height: saved.height ?? defaults.height,
-    // Transient — always reset
-    playheadPosition: 0,
-    isPlaying: false,
-  };
-}
-
-const [projectState, setProjectState] = createStore<ProjectState>(loadProjectState());
-
-/** Call once inside a reactive root (e.g. App onMount) to enable auto-save. */
-export function initProjectPersistence(): void {
-  createPersistEffect(PROJECT_KEY, (): PersistedProjectState => ({
-    name: projectState.name,
-    tracks: projectState.tracks.map((t) => ({
-      ...t,
-      clips: t.clips.map((c) => ({ ...c })),
-    })),
-    media: projectState.media.map(
-      ({ fileHandle: _fileHandle, ...rest }) => rest as MediaItem,
+    duration: Math.max(
+      MIN_PROJECTED_DURATION_SEC,
+      framesToSeconds(contentEndFrame(d), rate) + TAIL_PAD_SEC,
     ),
-    duration: projectState.duration,
-    fps: projectState.fps,
-    width: projectState.width,
-    height: projectState.height,
-  }));
+    fps: frameRateToNumber(rate),
+    width: d.sequence.width,
+    height: d.sequence.height,
+  };
 }
 
-// ── Mutations ─────────────────────────────────────────────────────────
+const [projectState, setProjectState] = createStore<ProjectState>({
+  ...projectDoc(doc()),
+  playheadPosition: 0,
+  isPlaying: false,
+});
 
-let clipIdCounter = 0;
+/**
+ * Keeps the projection in sync. `reconcile` with a key means an edit to one
+ * clip updates that clip's row rather than replacing every track, so Solid's
+ * fine-grained reactivity survives the projection.
+ */
+export function initProjectPersistence(): void {
+  createEffect(() => {
+    const projected = projectDoc(doc());
+    setProjectState(
+      produce((state) => {
+        state.name = projected.name;
+        state.duration = projected.duration;
+        state.fps = projected.fps;
+        state.width = projected.width;
+        state.height = projected.height;
+      }),
+    );
+    setProjectState("tracks", reconcile(projected.tracks, { key: "id" }));
+  });
+
+  createEffect(() => {
+    setProjectState(
+      "playheadPosition",
+      framesToSeconds(playheadFrame(), sequenceFrameRate()),
+    );
+  });
+
+  createEffect(() => {
+    setProjectState("isPlaying", isPlaying());
+  });
+
+  createPersistEffect(PROJECT_KEY, () => doc());
+}
+
+export { projectState, setProjectState };
+
+// ── Compatibility operations ──────────────────────────────────────────
+// Thin wrappers translating the old seconds-based API onto frame-based edits.
+// Each one is a single undo step.
+
+function rate(): FrameRate {
+  return sequenceFrameRate();
+}
+
+function toFrames(seconds: number): number {
+  return secondsToFrames(seconds, rate());
+}
 
 export function addClipToTrack(
   trackId: string,
   mediaId: string,
-  mediaName: string,
+  _mediaName: string,
   duration: number,
   startTime?: number,
-): Clip {
-  const track = projectState.tracks.find((t) => t.id === trackId);
-  // Default startTime: end of last clip on this track
-  const lastClipEnd = track
-    ? track.clips.reduce((max, c) => Math.max(max, c.startTime + c.duration), 0)
-    : 0;
-  const st = startTime ?? lastClipEnd;
+): Clip | null {
+  let createdId: string | undefined;
 
-  const clip: Clip = {
-    id: `clip-${Date.now()}-${clipIdCounter++}`,
-    mediaId,
-    trackId,
-    startTime: st,
-    duration,
-    inPoint: 0,
-    outPoint: duration,
-    effects: [],
-  };
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (clips) => [...clips, clip],
+  applyEdit(
+    "Add clip",
+    (d) => {
+      createdId = edits.insertClip(
+        d,
+        trackId,
+        { type: "asset", assetId: mediaId },
+        toFrames(duration),
+        {
+          startFrame: startTime === undefined ? undefined : toFrames(startTime),
+          mode: "fit",
+        },
+      )?.id;
+    },
+    { icon: "➕" },
   );
 
-  // Extend project duration if needed
-  const newEnd = st + duration;
-  if (newEnd > projectState.duration) {
-    setProjectState("duration", newEnd + 30); // pad 30s
-  }
-
-  const entry = mediaState.entries.find((e) => e.id === mediaId);
-
-  // Preload the frame source so the preview has something to draw. A store
-  // reaching into the renderer is the wrong layering; the media engine takes
-  // this over and this call goes away with it.
-  if (entry) {
-    void import("@/renderer/frame-source").then(({ getFrameSource }) => {
-      void getFrameSource(entry).catch(() => {});
-    });
-  }
-
-  // Auto-create a linked audio clip when a video is added to a video track.
-  //
-  // This duplicate clip is why export mixes every video's audio twice at 2x
-  // amplitude: the offline mixdown sums all tracks with no type filter, so it
-  // picks up both the video clip and its phantom twin. The fix is a
-  // `linkedAudio` flag on the video clip plus a real "Detach Audio" command,
-  // which lands with the audio engine.
-  if (track?.type === "video" && mediaId !== "__text__") {
-    if (entry?.hasAudio || entry?.type === "video") {
-      const audioTrack = projectState.tracks.find((t) => t.type === "audio");
-      if (audioTrack) {
-        const audioClip: Clip = {
-          id: `clip-${Date.now()}-${clipIdCounter++}`,
-          mediaId,
-          trackId: audioTrack.id,
-          startTime: st,
-          duration,
-          inPoint: 0,
-          outPoint: duration,
-          effects: [],
-        };
-        setProjectState(
-          "tracks",
-          (t) => t.id === audioTrack.id,
-          "clips",
-          (clips) => [...clips, audioClip],
-        );
-      }
-    }
-  }
-
-  return clip;
+  // Re-read from the committed document: the draft is revoked once the edit
+  // lands. Null means the track was locked or the request was invalid.
+  const found = createdId ? findClip(doc(), createdId) : undefined;
+  return found ? projectClip(found.clip, found.track, rate()) : null;
 }
 
 export function removeClip(trackId: string, clipId: string): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (clips) => clips.filter((c) => c.id !== clipId),
-  );
+  applyEdit("Delete clip", (d) => edits.removeClip(d, trackId, clipId), { icon: "🗑" });
 }
 
 export function moveClip(trackId: string, clipId: string, newStartTime: number): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "startTime",
-    Math.max(0, newStartTime),
+  applyEdit(
+    "Move clip",
+    (d) => edits.moveClip(d, trackId, clipId, toFrames(newStartTime)),
+    {
+      icon: "↔",
+      coalesceKey: `move:${clipId}`,
+    },
   );
 }
 
@@ -298,54 +472,16 @@ export function splitClipAtTime(
   clipId: string,
   splitTime: number,
 ): Clip | null {
-  const track = projectState.tracks.find((t) => t.id === trackId);
-  const clip = track?.clips.find((c) => c.id === clipId);
-  if (!clip) return null;
-
-  const relativeTime = splitTime - clip.startTime;
-  if (relativeTime <= 0.1 || relativeTime >= clip.duration - 0.1) return null;
-
-  // Shorten original clip
-  const originalDuration = clip.duration;
-  const originalOutPoint = clip.outPoint;
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "duration",
-    relativeTime,
+  let rightId: string | undefined;
+  applyEdit(
+    "Split clip",
+    (d) => {
+      rightId = edits.splitClip(d, trackId, clipId, toFrames(splitTime))?.right.id;
+    },
+    { icon: "✂" },
   );
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "outPoint",
-    clip.inPoint + relativeTime,
-  );
-
-  // Create new clip for the right portion
-  const newClip: Clip = {
-    id: `clip-${Date.now()}-${clipIdCounter++}`,
-    mediaId: clip.mediaId,
-    trackId,
-    startTime: splitTime,
-    duration: originalDuration - relativeTime,
-    inPoint: clip.inPoint + relativeTime,
-    outPoint: originalOutPoint,
-    effects: [...clip.effects],
-  };
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (clips) => [...clips, newClip],
-  );
-
-  return newClip;
+  const found = rightId ? findClip(doc(), rightId) : undefined;
+  return found ? projectClip(found.clip, found.track, rate()) : null;
 }
 
 export function trimClipLeft(
@@ -353,41 +489,10 @@ export function trimClipLeft(
   clipId: string,
   newStartTime: number,
 ): void {
-  const track = projectState.tracks.find((t) => t.id === trackId);
-  const clip = track?.clips.find((c) => c.id === clipId);
-  if (!clip) return;
-
-  const maxStart = clip.startTime + clip.duration - 0.1;
-  const clamped = Math.max(
-    Math.min(newStartTime, maxStart),
-    clip.startTime - clip.inPoint,
-  );
-
-  const delta = clamped - clip.startTime;
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "startTime",
-    clamped,
-  );
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "inPoint",
-    clip.inPoint + delta,
-  );
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "duration",
-    clip.duration - delta,
+  applyEdit(
+    "Trim clip",
+    (d) => edits.trimClipStart(d, trackId, clipId, toFrames(newStartTime)),
+    { icon: "⟵", coalesceKey: `trimStart:${clipId}` },
   );
 }
 
@@ -396,29 +501,13 @@ export function trimClipRight(
   clipId: string,
   newEndTime: number,
 ): void {
-  const track = projectState.tracks.find((t) => t.id === trackId);
-  const clip = track?.clips.find((c) => c.id === clipId);
-  if (!clip) return;
-
-  const minEnd = clip.startTime + 0.1;
-  const clamped = Math.max(newEndTime, minEnd);
-  const newDuration = clamped - clip.startTime;
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "duration",
-    newDuration,
-  );
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "outPoint",
-    clip.inPoint + newDuration,
+  applyEdit(
+    "Trim clip",
+    (d) => edits.trimClipEnd(d, trackId, clipId, toFrames(newEndTime)),
+    {
+      icon: "⟶",
+      coalesceKey: `trimEnd:${clipId}`,
+    },
   );
 }
 
@@ -429,130 +518,107 @@ export function getClipAt(trackId: string, time: number): Clip | undefined {
   );
 }
 
-export function getAllSnapPoints(): number[] {
-  const points: number[] = [0, projectState.playheadPosition];
-  for (const track of projectState.tracks) {
-    for (const clip of track.clips) {
-      points.push(clip.startTime);
-      points.push(clip.startTime + clip.duration);
-    }
-  }
-  return [...new Set(points)].sort((a, b) => a - b);
+export function getAllSnapPoints(excludeClipId?: string): number[] {
+  const r = rate();
+  return snapFrames(doc(), excludeClipId).map((f) => framesToSeconds(f, r));
 }
 
 export function snapToNearest(
   time: number,
-  threshold: number = 0.5,
+  threshold: number,
   excludeClipId?: string,
 ): number {
-  const points = getAllSnapPoints().filter((p) => {
-    if (excludeClipId) {
-      // Don't snap to own edges
-      for (const track of projectState.tracks) {
-        const clip = track.clips.find((c) => c.id === excludeClipId);
-        if (clip && (p === clip.startTime || p === clip.startTime + clip.duration)) {
-          return false;
-        }
-      }
-    }
-    return true;
-  });
-
-  let closest = time;
-  let minDist = threshold;
-  for (const p of points) {
-    const dist = Math.abs(time - p);
-    if (dist < minDist) {
-      minDist = dist;
-      closest = p;
+  let best = time;
+  let bestDistance = threshold;
+  for (const point of getAllSnapPoints(excludeClipId)) {
+    const distance = Math.abs(point - time);
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
     }
   }
-  return closest;
+  return best;
 }
 
 export function addTrack(type: "video" | "audio"): Track {
-  const existing = projectState.tracks.filter((t) => t.type === type);
-  const num = existing.length + 1;
-  const track: Track = {
-    id: `${type[0]}${num}-${Date.now()}`,
-    name: `${type === "video" ? "Video" : "Audio"} ${num}`,
+  let createdId: string | undefined;
+  applyEdit(
+    `Add ${type} track`,
+    (d) => {
+      createdId = edits.addTrack(d, type).id;
+    },
+    { icon: "➕" },
+  );
+  const found = doc().tracks.find((t) => t.id === createdId);
+  return {
+    id: found?.id ?? "",
+    name: found?.name ?? "",
     type,
     clips: [],
     muted: false,
     locked: false,
   };
-  setProjectState("tracks", (prev) => [...prev, track]);
-  return track;
 }
 
 export function reorderTrack(trackId: string, toIndex: number): void {
-  const fromIndex = projectState.tracks.findIndex((t) => t.id === trackId);
-  if (fromIndex === -1 || fromIndex === toIndex) return;
-  const clamped = Math.max(0, Math.min(toIndex, projectState.tracks.length - 1));
-  setProjectState("tracks", (prev) => {
-    const next = [...prev];
-    const [moved] = next.splice(fromIndex, 1);
-    next.splice(clamped, 0, moved);
-    return next;
+  applyEdit("Reorder tracks", (d) => edits.reorderTrack(d, trackId, toIndex), {
+    icon: "↕",
   });
 }
 
-export function setPlayhead(position: number): void {
-  setProjectState(
-    "playheadPosition",
-    Math.max(0, Math.min(position, projectState.duration)),
-  );
-}
-
-export function togglePlayback(): void {
-  setProjectState("isPlaying", !projectState.isPlaying);
-}
-
 export function toggleTrackMute(trackId: string): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "muted",
-    (m) => !m,
+  const track = doc().tracks.find((t) => t.id === trackId);
+  if (!track) return;
+  applyEdit(
+    track.muted ? "Unmute track" : "Mute track",
+    (d) => edits.setTrackFlag(d, trackId, "muted", !track.muted),
+    { icon: "🔇" },
   );
 }
 
 export function toggleTrackLock(trackId: string): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "locked",
-    (l) => !l,
+  const track = doc().tracks.find((t) => t.id === trackId);
+  if (!track) return;
+  applyEdit(
+    track.locked ? "Unlock track" : "Lock track",
+    (d) => edits.setTrackFlag(d, trackId, "locked", !track.locked),
+    { icon: "🔒" },
   );
 }
 
-// ── Effect mutations ─────────────────────────────────────────────────
+export function setPlayhead(position: number): void {
+  setPlayheadFrame(toFrames(position));
+}
 
-let effectIdCounter = 0;
+export function togglePlayback(): void {
+  setIsPlaying((playing) => !playing);
+}
+
+// ── Effects ───────────────────────────────────────────────────────────
+
+function withClip(d: ProjectDoc, trackId: string, clipId: string): DocClip | undefined {
+  return d.tracks.find((t) => t.id === trackId)?.clips.find((c) => c.id === clipId);
+}
 
 export function addEffectToClip(
   trackId: string,
   clipId: string,
   definitionId: string,
-  defaultValues: Record<string, number | number[]> = {},
+  defaults: Record<string, number | number[]>,
 ): ClipEffect {
-  const effect: ClipEffect = {
-    id: `fx-${Date.now()}-${effectIdCounter++}`,
-    definitionId,
-    values: { ...defaultValues },
-    keyframes: {},
-  };
-
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "effects",
-    (effects) => [...effects, effect],
+  const id = newId("fx");
+  applyEdit(
+    "Add effect",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (!clip) return;
+      const params: Record<string, Animatable<number | number[]>> = {};
+      for (const [name, value] of Object.entries(defaults)) params[name] = { value };
+      clip.effects.push({ id, definitionId, enabled: true, params });
+    },
+    { icon: "✨" },
   );
-
-  return effect;
+  return { id, definitionId, values: { ...defaults }, keyframes: {} };
 }
 
 export function removeEffectFromClip(
@@ -560,13 +626,13 @@ export function removeEffectFromClip(
   clipId: string,
   effectId: string,
 ): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "effects",
-    (effects) => effects.filter((e) => e.id !== effectId),
+  applyEdit(
+    "Remove effect",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (clip) clip.effects = clip.effects.filter((e) => e.id !== effectId);
+    },
+    { icon: "🗑" },
   );
 }
 
@@ -577,61 +643,18 @@ export function updateEffectValue(
   uniformName: string,
   value: number | number[],
 ): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "effects",
-    (e) => e.id === effectId,
-    "values",
-    (prev) => ({ ...prev, [uniformName]: value }),
-  );
-}
-
-// ── Keyframe mutations ────────────────────────────────────────────────
-
-let keyframeIdCounter = 0;
-
-/**
- * Helper: update the keyframes record on an effect.  We use index-based
- * paths and unwrap store proxies to plain objects before passing to the
- * updater — predicate-chain selectors with store proxies can miss
- * dynamic-key additions on deeply-nested objects.
- */
-function mutateEffectKeyframes(
-  trackId: string,
-  clipId: string,
-  effectId: string,
-  updater: (keyframes: Record<string, Keyframe[]>) => Record<string, Keyframe[]>,
-): void {
-  const trackIdx = projectState.tracks.findIndex((t) => t.id === trackId);
-  if (trackIdx === -1) return;
-  const clipIdx = projectState.tracks[trackIdx].clips.findIndex((c) => c.id === clipId);
-  if (clipIdx === -1) return;
-  const fxArr = projectState.tracks[trackIdx].clips[clipIdx].effects;
-  const effectIdx = fxArr.findIndex((e) => e.id === effectId);
-  if (effectIdx === -1) return;
-
-  // Read current keyframes as plain object (unwrap store proxy)
-  const current = fxArr[effectIdx].keyframes ?? {};
-  const plain: Record<string, Keyframe[]> = {};
-  for (const key of Object.keys(current)) {
-    plain[key] = (current[key] ?? []).map((k) => ({ ...k }));
-  }
-
-  const updated = updater(plain);
-
-  // Use index-based path to set the keyframes property directly
-  setProjectState(
-    "tracks",
-    trackIdx,
-    "clips",
-    clipIdx,
-    "effects",
-    effectIdx,
-    "keyframes",
-    updated,
+  applyEdit(
+    "Adjust effect",
+    (d) => {
+      const effect = withClip(d, trackId, clipId)?.effects.find(
+        (e) => e.id === effectId,
+      );
+      if (!effect) return;
+      const existing = effect.params[uniformName];
+      effect.params[uniformName] = { ...existing, value };
+    },
+    // A slider drag is one undo step, not one per pixel.
+    { icon: "🎚", coalesceKey: `effect:${effectId}:${uniformName}` },
   );
 }
 
@@ -643,22 +666,28 @@ export function addKeyframe(
   time: number,
   value: number,
   easing: KeyframeEasing = "linear",
-): Keyframe {
-  const kf: Keyframe = {
-    id: `kf-${Date.now()}-${keyframeIdCounter++}`,
-    time,
-    value,
-    easing,
-  };
-
-  mutateEffectKeyframes(trackId, clipId, effectId, (prev) => {
-    const existing = prev[uniformName] || [];
-    const filtered = existing.filter((k) => Math.abs(k.time - time) > 0.001);
-    const updated = [...filtered, kf].sort((a, b) => a.time - b.time);
-    return { ...prev, [uniformName]: updated };
-  });
-
-  return kf;
+): void {
+  applyEdit(
+    "Add keyframe",
+    (d) => {
+      const effect = withClip(d, trackId, clipId)?.effects.find(
+        (e) => e.id === effectId,
+      );
+      if (!effect) return;
+      const param = effect.params[uniformName] ?? { value };
+      const preset =
+        easing === "hold" || easing === "linear" ? undefined : EASING_PRESETS[easing];
+      effect.params[uniformName] = setKey(param, {
+        id: newId("kf"),
+        timeFrames: toFrames(time),
+        value,
+        interp: easing === "hold" ? "hold" : easing === "linear" ? "linear" : "bezier",
+        out: preset ? [...preset.out] : undefined,
+        in: preset ? [...preset.in] : undefined,
+      });
+    },
+    { icon: "🔑" },
+  );
 }
 
 export function removeKeyframe(
@@ -668,15 +697,20 @@ export function removeKeyframe(
   uniformName: string,
   keyframeId: string,
 ): void {
-  mutateEffectKeyframes(trackId, clipId, effectId, (prev) => {
-    const existing = prev[uniformName] || [];
-    const filtered = existing.filter((k) => k.id !== keyframeId);
-    if (filtered.length === 0) {
-      const { [uniformName]: _, ...rest } = prev;
-      return rest;
-    }
-    return { ...prev, [uniformName]: filtered };
-  });
+  applyEdit(
+    "Remove keyframe",
+    (d) => {
+      const effect = withClip(d, trackId, clipId)?.effects.find(
+        (e) => e.id === effectId,
+      );
+      if (!effect?.params[uniformName]) return;
+      effect.params[uniformName] = removeAnimKey(
+        effect.params[uniformName],
+        keyframeId,
+      );
+    },
+    { icon: "🔑" },
+  );
 }
 
 export function updateKeyframe(
@@ -685,15 +719,40 @@ export function updateKeyframe(
   effectId: string,
   uniformName: string,
   keyframeId: string,
-  updates: Partial<Pick<Keyframe, "time" | "value" | "easing">>,
+  patch: { value?: number; easing?: KeyframeEasing; time?: number },
 ): void {
-  mutateEffectKeyframes(trackId, clipId, effectId, (prev) => {
-    const existing = prev[uniformName] || [];
-    const updated = existing
-      .map((k) => (k.id === keyframeId ? { ...k, ...updates } : k))
-      .sort((a, b) => a.time - b.time);
-    return { ...prev, [uniformName]: updated };
-  });
+  applyEdit(
+    "Edit keyframe",
+    (d) => {
+      const effect = withClip(d, trackId, clipId)?.effects.find(
+        (e) => e.id === effectId,
+      );
+      const param = effect?.params[uniformName];
+      const key = param?.keys?.find((k) => k.id === keyframeId);
+      if (!key) return;
+
+      if (patch.value !== undefined) key.value = patch.value;
+      if (patch.time !== undefined) key.timeFrames = toFrames(patch.time);
+      if (patch.easing !== undefined) {
+        key.interp =
+          patch.easing === "hold"
+            ? "hold"
+            : patch.easing === "linear"
+              ? "linear"
+              : "bezier";
+        const preset =
+          patch.easing === "hold" || patch.easing === "linear"
+            ? undefined
+            : EASING_PRESETS[patch.easing];
+        key.out = preset ? [...preset.out] : undefined;
+        key.in = preset ? [...preset.in] : undefined;
+      }
+      if (patch.time !== undefined && param?.keys) {
+        param.keys.sort((a, b) => a.timeFrames - b.timeFrames);
+      }
+    },
+    { icon: "🔑", coalesceKey: `keyframe:${keyframeId}` },
+  );
 }
 
 export function removeAllKeyframes(
@@ -702,65 +761,22 @@ export function removeAllKeyframes(
   effectId: string,
   uniformName: string,
 ): void {
-  mutateEffectKeyframes(trackId, clipId, effectId, (prev) => {
-    const { [uniformName]: _, ...rest } = prev;
-    return rest;
-  });
-}
-
-/** Easing functions for keyframe interpolation */
-function applyEasing(t: number, easing: KeyframeEasing): number {
-  switch (easing) {
-    case "linear":
-      return t;
-    case "ease-in":
-      return t * t;
-    case "ease-out":
-      return t * (2 - t);
-    case "ease-in-out":
-      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-    case "hold":
-      return 0; // step function — hold previous value
-    default:
-      return t;
-  }
+  applyEdit(
+    "Clear keyframes",
+    (d) => {
+      const effect = withClip(d, trackId, clipId)?.effects.find(
+        (e) => e.id === effectId,
+      );
+      if (!effect?.params[uniformName]) return;
+      effect.params[uniformName] = clearKeys(effect.params[uniformName], 0);
+    },
+    { icon: "🔑" },
+  );
 }
 
 /**
- * Interpolate keyframed value at a given time (relative to clip start).
- * Returns undefined if no keyframes exist for this uniform.
- */
-export function interpolateKeyframes(
-  keyframes: Keyframe[],
-  time: number,
-): number | undefined {
-  if (!keyframes || keyframes.length === 0) return undefined;
-  if (keyframes.length === 1) return keyframes[0].value;
-
-  // Before first keyframe
-  if (time <= keyframes[0].time) return keyframes[0].value;
-  // After last keyframe
-  if (time >= keyframes[keyframes.length - 1].time)
-    return keyframes[keyframes.length - 1].value;
-
-  // Find surrounding keyframes
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i];
-    const b = keyframes[i + 1];
-    if (time >= a.time && time <= b.time) {
-      if (b.easing === "hold") return a.value;
-      const t = (time - a.time) / (b.time - a.time);
-      const eased = applyEasing(t, b.easing);
-      return a.value + (b.value - a.value) * eased;
-    }
-  }
-
-  return keyframes[keyframes.length - 1].value;
-}
-
-/**
- * Get the effective value of a uniform at a given clip-relative time,
- * considering keyframes. Falls back to the static value.
+ * Value of an effect parameter at a time, in seconds relative to the clip.
+ * Used by the renderer and the Properties panel.
  */
 export function getEffectValueAtTime(
   effect: ClipEffect,
@@ -768,78 +784,144 @@ export function getEffectValueAtTime(
   clipRelativeTime: number,
   fallback: number,
 ): number {
-  const kfs = effect.keyframes?.[uniformName];
-  if (!kfs || kfs.length === 0) return fallback;
-  return interpolateKeyframes(kfs, clipRelativeTime) ?? fallback;
+  const keys = effect.keyframes?.[uniformName];
+  if (!keys?.length) {
+    const value = effect.values[uniformName];
+    return typeof value === "number" ? value : fallback;
+  }
+  return interpolateKeyframes(keys, clipRelativeTime);
 }
 
+/** Compat shim for the old keyframe interpolation helper. */
+export function interpolateKeyframes(keyframes: Keyframe[], time: number): number {
+  if (keyframes.length === 0) return 0;
+  const r = rate();
+  const param: Animatable<number> = {
+    value: keyframes[0].value,
+    keys: keyframes.map((k) => ({
+      id: k.id,
+      timeFrames: secondsToFrames(k.time, r),
+      value: k.value,
+      interp:
+        k.easing === "hold" ? "hold" : k.easing === "linear" ? "linear" : "bezier",
+      out:
+        k.easing in EASING_PRESETS
+          ? [...EASING_PRESETS[k.easing as keyof typeof EASING_PRESETS].out]
+          : undefined,
+      in:
+        k.easing in EASING_PRESETS
+          ? [...EASING_PRESETS[k.easing as keyof typeof EASING_PRESETS].in]
+          : undefined,
+    })),
+  };
+  return evaluate(param, secondsToFrames(time, r));
+}
+
+// ── Transitions ───────────────────────────────────────────────────────
+
+/**
+ * Adds a transition into `clipId` from its left neighbour.
+ *
+ * Returns whether it was created: a transition needs handles on both sides,
+ * and the edit refuses rather than producing a freeze frame. The old API
+ * always "succeeded" because nothing rendered it.
+ */
 export function setClipTransition(
   trackId: string,
   clipId: string,
   transition: ClipTransition | undefined,
-): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "transition",
-    transition,
+): boolean {
+  if (!transition) {
+    removeClipTransition(trackId, clipId);
+    return true;
+  }
+
+  let created = false;
+  applyEdit(
+    "Add transition",
+    (d) => {
+      const track = d.tracks.find((t) => t.id === trackId);
+      const index = track?.clips.findIndex((c) => c.id === clipId) ?? -1;
+      if (!track || index <= 0) return;
+      created = !!edits.addTransition(
+        d,
+        trackId,
+        track.clips[index - 1].id,
+        clipId,
+        transition.type,
+        toFrames(transition.duration),
+      );
+    },
+    { icon: "🔀" },
   );
+  return created;
 }
 
 export function removeClipTransition(trackId: string, clipId: string): void {
-  setClipTransition(trackId, clipId, undefined);
+  applyEdit(
+    "Remove transition",
+    (d) => {
+      const track = d.tracks.find((t) => t.id === trackId);
+      const transition = track?.transitions.find((t) => t.rightClipId === clipId);
+      if (transition) edits.removeTransition(d, trackId, transition.id);
+    },
+    { icon: "🔀" },
+  );
 }
+
+// ── Titles ────────────────────────────────────────────────────────────
+
+const DEFAULT_TEXT_STYLE: TextStyle = {
+  text: "Text",
+  fontFamily: "sans-serif",
+  fontSize: 48,
+  fontWeight: "normal",
+  color: "#ffffff",
+  x: 0.5,
+  y: 0.5,
+  align: "center",
+};
 
 export function addTextClip(
   trackId: string,
   startTime: number,
-  duration: number = 5,
-  text: string = "Title",
-): Clip {
-  const clip: Clip = {
-    id: crypto.randomUUID(),
-    mediaId: "__text__",
-    trackId,
-    startTime,
-    duration,
-    inPoint: 0,
-    outPoint: duration,
-    effects: [],
-    textOverlay: {
-      text,
-      fontFamily: "Inter, sans-serif",
-      fontSize: 64,
-      fontWeight: "bold",
-      color: "#ffffff",
-      x: 0.5,
-      y: 0.5,
-      align: "center",
+  duration = 5,
+  text = "Title",
+): Clip | null {
+  let createdId: string | undefined;
+  applyEdit(
+    "Add title",
+    (d) => {
+      createdId = edits.insertClip(
+        d,
+        trackId,
+        { type: "text", style: { ...DEFAULT_TEXT_STYLE, text } },
+        toFrames(duration),
+        { startFrame: toFrames(startTime), mode: "fit" },
+      )?.id;
     },
-  };
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (clips) => [...clips, clip],
+    { icon: "🅣" },
   );
-  return clip;
+  const found = createdId ? findClip(doc(), createdId) : undefined;
+  return found ? projectClip(found.clip, found.track, rate()) : null;
 }
 
 export function updateTextOverlay(
   trackId: string,
   clipId: string,
-  updates: Partial<TextOverlay>,
+  patch: Partial<TextOverlay>,
 ): void {
-  setProjectState(
-    "tracks",
-    (t) => t.id === trackId,
-    "clips",
-    (c) => c.id === clipId,
-    "textOverlay",
-    (prev) => (prev ? { ...prev, ...updates } : undefined),
+  applyEdit(
+    "Edit title",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (clip?.source.type !== "text") return;
+      Object.assign(clip.source.style, patch);
+    },
+    { icon: "🅣", coalesceKey: `text:${clipId}` },
   );
 }
 
-export { projectState, setProjectState };
+// ── Re-exports used by the renderer ───────────────────────────────────
+
+export { clipEndFrame, contentEndFrame };

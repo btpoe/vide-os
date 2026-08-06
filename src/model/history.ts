@@ -33,6 +33,8 @@ export const COALESCE_WINDOW_MS = 500;
 export interface HistoryEntry {
   label: string;
   icon: string;
+  /** When the edit was made, for the History panel. */
+  at: number;
   doc: ProjectDoc;
   /**
    * What was selected when this edit was made, so undo restores context rather
@@ -182,9 +184,10 @@ export function applyEdit(
     };
   }
 
-  const past = [...state.past, { label, icon, doc: state.present, selection }].slice(
-    -MAX_HISTORY,
-  );
+  const past = [
+    ...state.past,
+    { label, icon, at: now, doc: state.present, selection },
+  ].slice(-MAX_HISTORY);
 
   return {
     present: next,
@@ -234,6 +237,7 @@ export function commitInteraction(
     {
       label,
       icon: options.icon ?? "✏️",
+      at: options.now ?? Date.now(),
       doc: interaction.baseDoc,
       selection: interaction.baseSelection,
     },
@@ -277,6 +281,7 @@ export function undo(state: HistoryState): HistoryState {
       {
         label: entry.label,
         icon: entry.icon,
+        at: entry.at,
         doc: state.present,
         selection: entry.selection,
       },
@@ -299,6 +304,7 @@ export function redo(state: HistoryState): HistoryState {
       {
         label: entry.label,
         icon: entry.icon,
+        at: entry.at,
         doc: state.present,
         selection: entry.selection,
       },
@@ -314,14 +320,18 @@ export function redo(state: HistoryState): HistoryState {
  * position. Index `past.length` is the present.
  */
 export function historyEntries(state: HistoryState): {
-  entries: { label: string; icon: string }[];
+  entries: { label: string; icon: string; at: number }[];
   currentIndex: number;
 } {
-  const entries = [
-    ...state.past.map((e) => ({ label: e.label, icon: e.icon })),
-    ...state.future.map((e) => ({ label: e.label, icon: e.icon })),
-  ];
-  return { entries, currentIndex: state.past.length };
+  const summarise = (e: HistoryEntry) => ({
+    label: e.label,
+    icon: e.icon,
+    at: e.at,
+  });
+  return {
+    entries: [...state.past.map(summarise), ...state.future.map(summarise)],
+    currentIndex: state.past.length,
+  };
 }
 
 /**

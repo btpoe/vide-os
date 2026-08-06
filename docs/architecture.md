@@ -188,7 +188,7 @@ Culling (a memo over the visible time range per track) rather than
 virtualization: at this scale it holds 60 fps without the interaction pain of
 dragging across a virtualized boundary.
 
-### Project document and undo (planned)
+### Project document and undo (built)
 
 **All times become integer frames.** Float seconds are derived. This removes a
 whole class of gap, overlap, and snap bugs and makes split and trim exact. Frame
@@ -238,7 +238,7 @@ progress value.
 enter the graph as ordinary layers — inheriting transform, opacity, effects and
 keyframes for free.
 
-### Platform seam (planned)
+### Platform seam (built, web only)
 
 One `Platform` interface with a web implementation (File System Access, OPFS,
 IndexedDB) and a Tauri implementation, selected at build time.

@@ -14,9 +14,17 @@ import {
 } from "./stores/ui-store";
 import {
   projectState,
-  setProjectState,
+  doc,
+  loadDocument,
+  newProject,
   initProjectPersistence,
 } from "./stores/project-store";
+import {
+  packBundle,
+  mediaTableFromDoc,
+  readProjectFile,
+  projectFileName,
+} from "./model/io";
 import { initTimelinePersistence } from "./stores/timeline-store";
 import { restoreMedia } from "./stores/media-store";
 import { registerPanel, type PanelDefinition } from "./web-components/registry";
@@ -133,6 +141,7 @@ const App: Component = () => {
   const [exportOpen, setExportOpen] = createSignal(false);
   const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
   const [aboutOpen, setAboutOpen] = createSignal(false);
+  const [openWarnings, setOpenWarnings] = createSignal<string[]>([]);
 
   onMount(() => {
     // Initialize persistent state auto-save
@@ -243,24 +252,26 @@ const App: Component = () => {
 
   const handleNewProject = () => {
     if (!confirm("Create a new project? Unsaved changes will be lost.")) return;
-    location.reload();
+    // Replaces the document rather than reloading the page, so panel layout
+    // and open folders survive.
+    newProject();
   };
 
   const handleSaveProject = () => {
-    const data = {
-      name: projectState.name,
-      tracks: JSON.parse(JSON.stringify(projectState.tracks)),
-      duration: projectState.duration,
-      fps: projectState.fps,
-      width: projectState.width,
-      height: projectState.height,
-    };
-    const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
+    // Writes a `.videos` bundle: the document plus a media table recording
+    // where each asset lives, so the project can be reopened elsewhere. The
+    // old format saved no media list at all.
+    const document_ = doc();
+    const bytes = packBundle({
+      doc: document_,
+      media: mediaTableFromDoc(document_),
+    });
+
+    const blob = new Blob([bytes], { type: "application/zip" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${projectState.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.videos.json`;
+    a.download = projectFileName(document_.name);
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -268,26 +279,24 @@ const App: Component = () => {
   const handleOpenProject = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".json,.videos.json";
+    input.accept = ".videos,.json";
     input.onchange = () =>
       void (async () => {
         const file = input.files?.[0];
         if (!file) return;
         try {
-          const text = await file.text();
-          const data = JSON.parse(text);
-          if (data.tracks) {
-            setProjectState("name", data.name || "Untitled Project");
-            setProjectState("tracks", data.tracks);
-            setProjectState("duration", data.duration || 300);
-            setProjectState("fps", data.fps || 30);
-            setProjectState("width", data.width || 1920);
-            setProjectState("height", data.height || 1080);
-            setProjectState("playheadPosition", 0);
-            setProjectState("isPlaying", false);
-          }
-        } catch {
-          alert("Failed to load project file.");
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          // Parses, migrates from any older format, and validates against the
+          // document invariants before anything is swapped in.
+          const { doc: loaded, warnings } = readProjectFile(bytes);
+          loadDocument(loaded);
+          if (warnings.length > 0) setOpenWarnings(warnings);
+        } catch (error) {
+          alert(
+            error instanceof Error
+              ? `Could not open the project:\n\n${error.message}`
+              : "Could not open the project.",
+          );
         }
       })();
     input.click();
@@ -458,6 +467,38 @@ const App: Component = () => {
 
       {/* Export Dialog */}
       <ExportDialog open={exportOpen()} onClose={() => setExportOpen(false)} />
+
+      {/*
+        Notes from opening an older project — offline media, trimmed overlaps,
+        a reinterpreted frame rate. Shown rather than swallowed, because most
+        of them mean the user has something to fix.
+      */}
+      <Show when={openWarnings().length > 0}>
+        <div
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setOpenWarnings([])}
+        >
+          <div
+            class="bg-card border border-border rounded-lg shadow-2xl w-[480px] max-h-[70vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div class="flex items-center justify-between px-5 py-3 border-b border-border">
+              <h2 class="text-sm font-semibold">Project opened with changes</h2>
+              <button
+                class="text-muted-foreground hover:text-foreground"
+                onClick={() => setOpenWarnings([])}
+              >
+                ✕
+              </button>
+            </div>
+            <ul class="px-5 py-4 space-y-2 text-xs text-muted-foreground list-disc list-inside">
+              {openWarnings().map((warning) => (
+                <li>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </Show>
 
       {/* Keyboard Shortcuts Overlay */}
       <Show when={shortcutsOpen()}>

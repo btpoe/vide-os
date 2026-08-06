@@ -19,7 +19,6 @@ import { mediaState } from "@/stores/media-store";
 import { timelineState } from "@/stores/timeline-store";
 import { EFFECT_DEFINITIONS } from "@/renderer/effects-pipeline";
 import { TRANSITION_DEFINITIONS } from "@/renderer/transitions";
-import { pushAction } from "@/stores/history-store";
 import { formatDuration } from "@/lib/fs-access";
 
 const PropertiesPanel: Component = () => {
@@ -370,17 +369,6 @@ const PropertiesPanel: Component = () => {
                                   info().clip.id,
                                   fx.id,
                                 );
-                                pushAction(
-                                  `Remove ${def()?.name || "effect"}`,
-                                  "\ud83d\uddd1",
-                                  () => {},
-                                  () =>
-                                    removeEffectFromClip(
-                                      info().track.id,
-                                      info().clip.id,
-                                      fx.id,
-                                    ),
-                                );
                               }}
                               title="Remove effect"
                             >
@@ -452,48 +440,14 @@ const PropertiesPanel: Component = () => {
                                         uniform.name,
                                         existing.id,
                                       );
-                                      pushAction(
-                                        `Remove keyframe`,
-                                        "◇",
-                                        () => {},
-                                        () =>
-                                          removeKeyframe(
-                                            info().track.id,
-                                            info().clip.id,
-                                            fx.id,
-                                            uniform.name,
-                                            existing.id,
-                                          ),
-                                      );
                                     } else {
-                                      const kf = addKeyframe(
+                                      addKeyframe(
                                         info().track.id,
                                         info().clip.id,
                                         fx.id,
                                         uniform.name,
                                         clipRelativeTime(),
                                         currentVal(),
-                                      );
-                                      pushAction(
-                                        `Add keyframe`,
-                                        "◆",
-                                        () =>
-                                          removeKeyframe(
-                                            info().track.id,
-                                            info().clip.id,
-                                            fx.id,
-                                            uniform.name,
-                                            kf.id,
-                                          ),
-                                        () =>
-                                          addKeyframe(
-                                            info().track.id,
-                                            info().clip.id,
-                                            fx.id,
-                                            uniform.name,
-                                            clipRelativeTime(),
-                                            currentVal(),
-                                          ),
                                       );
                                     }
                                   };
@@ -635,18 +589,6 @@ const PropertiesPanel: Component = () => {
                                                   info().clip.id,
                                                   fx.id,
                                                   uniform.name,
-                                                );
-                                                pushAction(
-                                                  `Clear keyframes`,
-                                                  "◇",
-                                                  () => {},
-                                                  () =>
-                                                    removeAllKeyframes(
-                                                      info().track.id,
-                                                      info().clip.id,
-                                                      fx.id,
-                                                      uniform.name,
-                                                    ),
                                                 );
                                               }}
                                               title="Remove all keyframes"

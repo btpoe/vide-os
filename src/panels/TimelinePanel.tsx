@@ -208,13 +208,7 @@ const TimelinePanel: Component = () => {
       try {
         const data = JSON.parse(mediaData);
         const duration = data.duration || 10;
-        const clip = addClipToTrack(trackId, data.id, data.name, duration);
-        pushAction(
-          `Add ${data.name}`,
-          "➕",
-          () => removeClip(trackId, clip.id),
-          () => addClipToTrack(trackId, data.id, data.name, duration, clip.startTime),
-        );
+        addClipToTrack(trackId, data.id, data.name, duration);
       } catch {
         // Malformed drag payload — ignore the drop.
       }
@@ -231,14 +225,7 @@ const TimelinePanel: Component = () => {
           if (!entry) return;
 
           const duration = entry.duration || 10;
-          const clip = addClipToTrack(trackId, entry.id, entry.name, duration);
-          pushAction(
-            `Add ${entry.name}`,
-            "➕",
-            () => removeClip(trackId, clip.id),
-            () =>
-              addClipToTrack(trackId, entry.id, entry.name, duration, clip.startTime),
-          );
+          addClipToTrack(trackId, entry.id, entry.name, duration);
         })();
       }
     }
@@ -446,13 +433,7 @@ const TimelinePanel: Component = () => {
       const xPct = (e.clientX - rect.left) / rect.width;
       const time = xPct * projectState.duration;
       const clip = addTextClip(trackId, Math.max(0, time), 5, "Title");
-      selectClip({ trackId, clipId: clip.id });
-      pushAction(
-        "Add Text Clip",
-        "T",
-        () => {},
-        () => removeClip(trackId, clip.id),
-      );
+      if (clip) selectClip({ trackId, clipId: clip.id });
       return;
     }
 
@@ -896,6 +877,7 @@ const TimelinePanel: Component = () => {
 
                     return (
                       <div
+                        data-clip-id={clip.id}
                         style={{
                           position: "absolute",
                           left: `${timeToPct(clip.startTime)}%`,
