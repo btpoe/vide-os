@@ -34,12 +34,12 @@ it.
 | P12 | Project files saved no media list; clip ids were `Date.now()`-based                                                   | Saved projects could not be reopened anywhere, including on the machine that wrote them          | Phase 1b                                      |
 | P13 | Split-undo stubbed, trim-redo empty, delete-undo minting new ids and dropping effects/in-out/transitions              | Undo silently corrupts the project                                                               | Phase 1a                                      |
 | P14 | Timeline zoom affects only ruler tick density; clip geometry is a percentage of total duration                        | A 20 s edit occupies ~6% of the panel with no way to zoom in                                     | Phase 2                                       |
-| P15 | `renderTransition` called from nowhere; compositor has no text path                                                   | Transitions and titles are stored, shown in the timeline, and never rendered                     | Phase 4                                       |
-| P16 | `PropInput` had no `onInput`; opacity/volume were static divs reading "100%"                                          | Six controls that looked functional and did nothing                                              | Phase 0 (removed)                             |
+| P15 | `renderTransition` called from nowhere; compositor has no text path                                                   | Transitions and titles are stored, shown in the timeline, and never rendered                     | Phase 4 ✓                                     |
+| P16 | `PropInput` had no `onInput`; opacity/volume were static divs reading "100%"                                          | Six controls that looked functional and did nothing                                              | Phase 0 (removed), Phase 4 (built) ✓          |
 | P17 | Extension whitelist advertised avi/mkv/flv/wmv/heic as supported                                                      | Those import with an icon and a duration, then render black with the decode rejection swallowed  | Phase 0 (partial), Phase 3 (real probe)       |
 | P18 | `trimClipRight` clamped only the minimum                                                                              | Dragging right forever pushes the out-point past the media into a silent freeze frame            | Phase 1a                                      |
 | P19 | `splitClipAtTime` pushed the new clip to the end of the array; nothing kept clips sorted                              | Render order depended on edit history                                                            | Phase 1a                                      |
-| P20 | Y-flip baked into several vertex shaders                                                                              | With ≥2 visible video tracks, alternating layers render upside down                              | Phase 4                                       |
+| P20 | Y-flip baked into several vertex shaders                                                                              | With ≥2 visible video tracks, alternating layers render upside down                              | Phase 4 ✓                                     |
 
 ---
 
@@ -370,6 +370,76 @@ anywhere that compares audio position to video position and corrects it,
 because there is nothing to correct: a ramp scheduled at a time happens at that
 time. The old code had drift correction at a 0.15s threshold precisely because
 it had two clocks.
+
+---
+
+## Phase 4 — render graph
+
+### Found
+
+- **The Gaussian blur was one horizontal pass.** `u_direction` was declared,
+  hidden from the UI, and defaulted to `[1, 0]`; nothing ever set it. Every
+  "blur" in the app was a one-dimensional smear. The offsets were also in
+  pixels (`i / u_resolution`), so the same radius meant a different amount of
+  blur at preview resolution than at export resolution.
+- **The predicted chroma-key ghosting does not exist.** The plan called for
+  clearing ping-pong targets each pass because chroma key was expected to
+  blend against stale buffer contents. It cannot: `gl.BLEND` is disabled
+  graph-wide and every effect pass draws a full-coverage quad, so a pass
+  overwrites the target completely. The clear was added anyway — it costs
+  nothing and it matters the moment an effect uses `discard` or draws less
+  than the whole frame — but it is insurance, not a fix, and the test beside
+  it pins render idempotency rather than claiming to catch a ghost.
+- **`Transform & Opacity` was still an "unbuilt" placeholder.** Phase 0
+  replaced the six fake controls with an honest note; by Phase 4 the renderer
+  supported all of them and the note had become the lie instead.
+- **`clip-edits.ts` still carried hand-written undo inverses.** Snapshot undo
+  landed in Phase 1, but `deleteSelectedClips` kept its `pushAction` pair, so
+  deleting four clips pushed four broken entries beside the four correct
+  snapshot entries. `EffectsPanel` did the same on add-effect. `pushAction` had
+  already been reduced to a dev-warning no-op, so the damage was noise rather
+  than corruption.
+- **Nudge moved clips by one second.** `nudgeSelectedClips(-1)` took seconds;
+  the shortcut is Shift+Arrow, which every NLE binds to one frame.
+
+### Decided
+
+- **One `ParamTarget` for clip properties and effect uniforms.** They are the
+  same thing — an `Animatable` hanging off a clip — and they had two parallel
+  APIs, one of which spoke seconds. Unifying them is what makes a single
+  `ParamRow` able to drive twelve clip properties and every effect uniform,
+  with the stopwatch, keyframe diamond, strip and easing picker on all of them
+  rather than only on effects.
+- **Setting a parameter writes a keyframe when the parameter is animated.**
+  Otherwise the base value changes and nothing moves on screen, because the
+  keys win. That branch is the only subtle thing in the whole parameter API,
+  which is why the panel has exactly one setter rather than twelve.
+- **Switching animation off freezes the value at the playhead** rather than
+  reverting to the base value. Turning off the stopwatch should not move the
+  picture.
+- **Anchor is not animatable.** It defines what position, scale and rotation
+  are relative to; animating the origin of a rotation is a way to confuse
+  yourself, and no creator-tier editor offers it.
+- **Blur radius is a fraction of frame height.** Resolution-independent by
+  construction, so a blur set while previewing at half resolution is the same
+  blur in a full-resolution export. The horizontal pass corrects for aspect so
+  the result is round rather than stretched.
+- **The Y-flip happens once, at texture upload**, via
+  `UNPACK_FLIP_Y_WEBGL` — not the plan's "flip twice, once at upload and once
+  at final blit". One flip in one place is simpler to reason about and easier
+  to prove; the compositor browser test pins a single orientation, closing P20.
+
+### The compatibility projection is nearly gone
+
+§1.7 recorded `projectState` as a deliberate temporary: a seconds-based,
+`mediaId`-keyed projection of the document, so the Phase 1 model rewrite did
+not have to land at the same time as rewriting 111 read sites across 14 files.
+
+It now has **one** consumer left: `renderer/export-engine.ts`, which Phase 5
+deletes outright. Migrating it first would be work thrown away, so instead
+`test/unit/no-compat-projection.test.ts` holds an exemption list of exactly two
+files and fails if any other file reads the projection. When the list can be
+emptied, the projection and that test go together.
 
 ---
 

@@ -12,3 +12,6 @@ test/browser/__screenshots__
 .vitest
 playwright-report
 test-results
+
+# Screenshots and traces from failed browser-mode tests.
+.vitest-attachments/

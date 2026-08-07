@@ -3,6 +3,7 @@ import {
   createCompositor,
   renderFrame,
   disposeCompositor,
+  currentAccumulator,
 } from "@/renderer/compositor";
 import { mediaEngine } from "@/media/engine";
 import { forgetAllAssets } from "@/media/asset-registry";
@@ -115,7 +116,7 @@ describe("compositor", () => {
 
     renderFrame(comp!, 10);
 
-    const image = readComposite(comp!.gl, comp!.compositeBuffer.fbo, 256, 256);
+    const image = readComposite(comp!.gl, currentAccumulator(comp!).fbo, 256, 256);
     const anyLit = [...image.data].some((v, i) => i % 4 !== 3 && v > 16);
     expect(anyLit, "composite should not be entirely black").toBe(true);
 
@@ -127,37 +128,21 @@ describe("compositor", () => {
     const canvas = makeCanvas();
     const comp = createCompositor(canvas)!;
     const clip = doc().tracks.find((t) => t.kind === "video")!.clips[0];
-    const results: { frame: number; asRead: number; flipped: number }[] = [];
 
     for (const frame of [3, 11, 24]) {
       (await mediaEngine.getExact(doc(), clip, frame))?.release();
       renderFrame(comp, frame);
 
-      const image = readComposite(comp.gl, comp.compositeBuffer.fbo, 256, 256);
+      const image = readComposite(comp.gl, currentAccumulator(comp).fbo, 256, 256);
       const readback = new OffscreenCanvas(256, 256);
       const ctx = readback.getContext("2d", { willReadFrequently: true })!;
       ctx.putImageData(image, 0, 0);
 
-      // Read both orientations: the compositor's quad bakes a V-flip and the
-      // GL read is bottom-up, so which way up the composite lands is exactly
-      // the Y-flip confusion the render graph rewrite is due to settle.
-      const asRead = readFrameMarker(ctx, 256, 256);
-      ctx.save();
-      ctx.scale(1, -1);
-      ctx.drawImage(readback, 0, -256);
-      ctx.restore();
-      const flipped = readFrameMarker(ctx, 256, 256);
-      results.push({ frame, asRead, flipped });
+      // One orientation, asserted. The renderer flips exactly once, at
+      // texture upload, and `readComposite` undoes GL's bottom-up read — so
+      // what comes back is the picture the right way up.
+      expect(readFrameMarker(ctx, 256, 256), `frame ${frame}`).toBe(frame);
     }
-
-    // Whichever way up the composite lands, one orientation must read back
-    // the exact frame the playhead is on for every sample.
-    const asReadMatches = results.every((r) => r.asRead === r.frame);
-    const flippedMatches = results.every((r) => r.flipped === r.frame);
-    expect(
-      asReadMatches || flippedMatches,
-      `frame markers did not read back: ${JSON.stringify(results)}`,
-    ).toBe(true);
 
     disposeCompositor(comp);
   });

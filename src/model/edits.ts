@@ -29,6 +29,7 @@ import {
   assetDurationFrames,
 } from "./doc";
 import { newId } from "./ids";
+import { evaluate, type Animatable, type Interp } from "@/lib/animation";
 
 /** Shortest clip the timeline will produce. One frame is still editable. */
 export const MIN_CLIP_FRAMES = 1;
@@ -39,6 +40,11 @@ type Draft = ProjectDoc;
 
 function track(doc: Draft, trackId: string): Track | undefined {
   return doc.tracks.find((t) => t.id === trackId);
+}
+
+/** A clip by id within a track. */
+function findClip(doc: Draft, trackId: string, clipId: string): Clip | undefined {
+  return track(doc, trackId)?.clips.find((c) => c.id === clipId);
 }
 
 function sortClips(t: Track): void {
@@ -807,6 +813,308 @@ export function updateMarker(
 }
 
 // ── Sequence ──────────────────────────────────────────────────────────
+
+// ── Animatable parameters ─────────────────────────────────────────────
+
+/**
+ * The animatable numeric properties of a clip, addressed by path.
+ *
+ * One string per property rather than a setter per property: the panel needs
+ * to render a dozen near-identical rows, and every one of them wants the same
+ * operations (read, set, key, unkey, ease). Twelve setters would be twelve
+ * chances to forget the keyframe branch — which is how the original panel
+ * ended up with static divs reading "100%".
+ */
+export const CLIP_PARAM_PATHS = [
+  "opacity",
+  "volume",
+  "pan",
+  "transform.x",
+  "transform.y",
+  "transform.scaleX",
+  "transform.scaleY",
+  "transform.rotation",
+  "crop.left",
+  "crop.right",
+  "crop.top",
+  "crop.bottom",
+] as const;
+
+export type ClipParamPath = (typeof CLIP_PARAM_PATHS)[number];
+
+/**
+ * Anything the properties panel can animate.
+ *
+ * Effect uniforms and clip properties are the same kind of thing — an
+ * `Animatable` hanging off a clip — so they get one set of operations and the
+ * panel gets one row component. They used to have two parallel APIs, one of
+ * which spoke seconds.
+ */
+export type ParamTarget =
+  | { kind: "clip"; path: ClipParamPath }
+  | { kind: "effect"; effectId: string; uniform: string };
+
+export function clipParamPath(path: ClipParamPath): ParamTarget {
+  return { kind: "clip", path };
+}
+
+export function effectParam(effectId: string, uniform: string): ParamTarget {
+  return { kind: "effect", effectId, uniform };
+}
+
+/** The `Animatable` a clip path names. */
+function paramAtPath(clip: Clip, path: ClipParamPath): Animatable<number> {
+  switch (path) {
+    case "opacity":
+      return clip.opacity;
+    case "volume":
+      return clip.volume;
+    case "pan":
+      return clip.pan;
+    case "transform.x":
+      return clip.transform.x;
+    case "transform.y":
+      return clip.transform.y;
+    case "transform.scaleX":
+      return clip.transform.scaleX;
+    case "transform.scaleY":
+      return clip.transform.scaleY;
+    case "transform.rotation":
+      return clip.transform.rotation;
+    case "crop.left":
+      return clip.crop.left;
+    case "crop.right":
+      return clip.crop.right;
+    case "crop.top":
+      return clip.crop.top;
+    case "crop.bottom":
+      return clip.crop.bottom;
+  }
+}
+
+export type ParamValue = number | number[];
+
+/** The `Animatable` a target names, or undefined if the effect is gone. */
+export function paramOf(
+  clip: Clip,
+  target: ParamTarget,
+): Animatable<ParamValue> | undefined {
+  if (target.kind === "clip") return paramAtPath(clip, target.path);
+  const effect = clip.effects.find((e) => e.id === target.effectId);
+  return effect?.params[target.uniform];
+}
+
+/**
+ * Frames from the clip's own start — the space keyframes live in.
+ *
+ * Keyframes are clip-relative so that moving a clip along the timeline carries
+ * its animation with it.
+ */
+export function localFrame(clip: Clip, timelineFrame: number): number {
+  return timelineFrame - clip.startFrame;
+}
+
+/** The value a target has at a timeline frame, animation included. */
+export function paramValueAt(
+  clip: Clip,
+  target: ParamTarget,
+  timelineFrame: number,
+): ParamValue | undefined {
+  const param = paramOf(clip, target);
+  if (!param) return undefined;
+  return evaluate(param, localFrame(clip, timelineFrame));
+}
+
+/**
+ * Sets a parameter at a frame.
+ *
+ * If the parameter is animated the value lands on a keyframe at that frame,
+ * creating one if there isn't one yet; if it isn't, it changes the constant.
+ * That is what every NLE does, and it is why a single "set" serves the whole
+ * panel.
+ */
+export function setParam(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  target: ParamTarget,
+  value: ParamValue,
+  timelineFrame = 0,
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const param = paramOf(clip, target);
+  if (!param) return;
+
+  if (!param.keys || param.keys.length === 0) {
+    param.value = value;
+    return;
+  }
+
+  const at = localFrame(clip, timelineFrame);
+  const existing = param.keys.find((k) => k.timeFrames === at);
+  if (existing) {
+    existing.value = value;
+    return;
+  }
+  param.keys.push({
+    id: newId("key"),
+    timeFrames: at,
+    value,
+    // Matching the neighbour keeps the curve's character when a key is added
+    // in the middle of an ease.
+    interp: nearestInterp(param, at),
+  });
+  param.keys.sort((a, b) => a.timeFrames - b.timeFrames);
+}
+
+/** The interpolation of the key just before `at`, defaulting to linear. */
+function nearestInterp(param: Animatable<ParamValue>, at: number): Interp {
+  let best: Interp = "linear";
+  for (const key of param.keys ?? []) {
+    if (key.timeFrames <= at) best = key.interp;
+  }
+  return best;
+}
+
+/**
+ * Adds a keyframe at a frame, holding whatever the parameter shows there.
+ *
+ * Pressing the stopwatch must not change the picture — the first key captures
+ * the current value rather than resetting to a default.
+ */
+export function addParamKey(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  target: ParamTarget,
+  timelineFrame: number,
+  interp: Interp = "linear",
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const param = paramOf(clip, target);
+  if (!param) return;
+
+  const at = localFrame(clip, timelineFrame);
+  const value = evaluate(param, at);
+
+  param.keys ??= [];
+  const existing = param.keys.find((k) => k.timeFrames === at);
+  if (existing) {
+    existing.value = value;
+    existing.interp = interp;
+    return;
+  }
+  param.keys.push({ id: newId("key"), timeFrames: at, value, interp });
+  param.keys.sort((a, b) => a.timeFrames - b.timeFrames);
+}
+
+export function removeParamKey(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  target: ParamTarget,
+  keyId: string,
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const param = paramOf(clip, target);
+  if (!param?.keys) return;
+  param.keys = param.keys.filter((k) => k.id !== keyId);
+  // An empty array still reads as animated, which leaves the stopwatch lit
+  // with nothing behind it.
+  if (param.keys.length === 0) delete param.keys;
+}
+
+/** Changes a key's interpolation, and its bezier handles when it has them. */
+export function setParamKeyInterp(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  target: ParamTarget,
+  keyId: string,
+  interp: Interp,
+  handles?: { out?: [number, number]; in?: [number, number] },
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const key = paramOf(clip, target)?.keys?.find((k) => k.id === keyId);
+  if (!key) return;
+  key.interp = interp;
+  if (handles?.out) key.out = handles.out;
+  if (handles?.in) key.in = handles.in;
+}
+
+/**
+ * Removes all animation from a parameter, freezing it at what it showed.
+ *
+ * Freezing rather than reverting to the base value is the non-destructive
+ * choice: turning animation off should not move the picture.
+ */
+export function clearParamKeys(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  target: ParamTarget,
+  timelineFrame: number,
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const param = paramOf(clip, target);
+  if (!param?.keys || param.keys.length === 0) return;
+  param.value = evaluate(param, localFrame(clip, timelineFrame));
+  delete param.keys;
+}
+
+/** The non-animatable clip settings, which are a plain patch. */
+export function setClipSettings(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  patch: Partial<Pick<Clip, "fit" | "blend" | "enabled" | "linkedAudio">> & {
+    anchorX?: number;
+    anchorY?: number;
+  },
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  if (patch.fit !== undefined) clip.fit = patch.fit;
+  if (patch.blend !== undefined) clip.blend = patch.blend;
+  if (patch.enabled !== undefined) clip.enabled = patch.enabled;
+  if (patch.linkedAudio !== undefined) clip.linkedAudio = patch.linkedAudio;
+  if (patch.anchorX !== undefined) clip.transform.anchorX = patch.anchorX;
+  if (patch.anchorY !== undefined) clip.transform.anchorY = patch.anchorY;
+}
+
+/** Enables or disables one effect on a clip. */
+export function setEffectEnabled(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  effectId: string,
+  enabled: boolean,
+): void {
+  const effect = findClip(doc, trackId, clipId)?.effects.find((e) => e.id === effectId);
+  if (effect) effect.enabled = enabled;
+}
+
+/** Moves an effect within a clip's chain. Order changes the picture. */
+export function moveEffect(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  effectId: string,
+  toIndex: number,
+): void {
+  const clip = findClip(doc, trackId, clipId);
+  if (!clip) return;
+  const from = clip.effects.findIndex((e) => e.id === effectId);
+  if (from < 0) return;
+  const target = Math.max(0, Math.min(clip.effects.length - 1, toIndex));
+  const [effect] = clip.effects.splice(from, 1);
+  clip.effects.splice(target, 0, effect);
+}
 
 export function setSequence(doc: Draft, patch: Partial<ProjectDoc["sequence"]>): void {
   Object.assign(doc.sequence, patch);

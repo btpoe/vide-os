@@ -13,11 +13,11 @@
  * `textOverlay` on a `"__text__"` clip. It is rebuilt and reconciled whenever
  * the document changes.
  *
- * This exists so the model rewrite does not have to land at the same time as
- * the timeline and renderer rewrites. It is deliberately temporary: as each
- * consumer is rebuilt it should move to `doc()` and the frame-based API, and
- * when the last one has, this projection and everything marked "compat" below
- * goes away.
+ * This existed so the model rewrite did not have to land at the same time as
+ * the timeline and renderer rewrites. **One consumer is left**:
+ * `renderer/export-engine.ts`, which Phase 5 replaces outright. Nothing else
+ * may read it — `test/unit/no-compat-projection.test.ts` enforces that — and
+ * it dies with that file.
  *
  * Writing to the projection does nothing useful — it is overwritten on the next
  * document change. Use the exported operations.
@@ -59,11 +59,13 @@ import {
 import {
   type Animatable,
   type Keyframe as DocKeyframe,
+  type Interp,
   evaluate,
   setKey,
   removeKey as removeAnimKey,
   clearKeys,
   EASING_PRESETS,
+  type EasingPreset,
 } from "@/lib/animation";
 import {
   framesToSeconds,
@@ -431,6 +433,10 @@ export function initProjectPersistence(): void {
   createPersistEffect(PROJECT_KEY, () => doc());
 }
 
+/**
+ * @deprecated The seconds-shaped compatibility projection. Its last consumer is
+ * `renderer/export-engine.ts`, which Phase 5 deletes; read `doc()` instead.
+ */
 export { projectState, setProjectState };
 
 // ── Compatibility operations ──────────────────────────────────────────
@@ -900,30 +906,242 @@ export function removeClipTransition(trackId: string, clipId: string): void {
   );
 }
 
+// ── Animatable parameters ─────────────────────────────────────────────
+
+/** What the panel needs to draw one parameter row. */
+export interface ParamView {
+  /** The value at the playhead, animation included. */
+  value: edits.ParamValue;
+  animated: boolean;
+  keys: readonly DocKeyframe<edits.ParamValue>[];
+  /** Whether a keyframe sits exactly on the playhead. */
+  keyedHere: boolean;
+  /** Whether the playhead is inside the clip at all. */
+  inRange: boolean;
+}
+
+function clipOf(trackId: string, clipId: string): DocClip | undefined {
+  return doc()
+    .tracks.find((t) => t.id === trackId)
+    ?.clips.find((c) => c.id === clipId);
+}
+
+/** Reads a parameter as the panel sees it: at the playhead. */
+export function readParam(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+): ParamView | null {
+  const clip = clipOf(trackId, clipId);
+  if (!clip) return null;
+  const param = edits.paramOf(clip, target);
+  if (!param) return null;
+
+  const frame = playheadFrame();
+  const at = edits.localFrame(clip, frame);
+  return {
+    value: evaluate(param, at),
+    animated: (param.keys?.length ?? 0) > 0,
+    keys: param.keys ?? [],
+    keyedHere: (param.keys ?? []).some((k) => k.timeFrames === at),
+    inRange: at >= 0 && at < clip.durationFrames,
+  };
+}
+
+/**
+ * Sets a parameter at the playhead, coalesced so a slider drag is one undo
+ * step. Writes a keyframe when the parameter is animated.
+ */
+export function writeParam(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+  value: edits.ParamValue,
+  label = "Adjust",
+): void {
+  applyEdit(
+    label,
+    (d) => {
+      edits.setParam(d, trackId, clipId, target, value, playheadFrame());
+    },
+    { icon: "🎛", coalesceKey: `param:${clipId}:${targetKey(target)}` },
+  );
+}
+
+/** Starts animating a parameter, or stops and freezes it where it stands. */
+export function toggleParamAnimation(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+): void {
+  const view = readParam(trackId, clipId, target);
+  if (!view) return;
+
+  applyEdit(
+    view.animated ? "Remove keyframes" : "Animate parameter",
+    (d) => {
+      if (view.animated)
+        edits.clearParamKeys(d, trackId, clipId, target, playheadFrame());
+      else edits.addParamKey(d, trackId, clipId, target, playheadFrame());
+    },
+    { icon: "⏱" },
+  );
+}
+
+/** Adds or removes a keyframe at the playhead. */
+export function toggleParamKey(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+): void {
+  const clip = clipOf(trackId, clipId);
+  const view = readParam(trackId, clipId, target);
+  if (!clip || !view) return;
+
+  const at = edits.localFrame(clip, playheadFrame());
+  const existing = view.keys.find((k) => k.timeFrames === at);
+
+  applyEdit(
+    existing ? "Remove keyframe" : "Add keyframe",
+    (d) => {
+      if (existing) edits.removeParamKey(d, trackId, clipId, target, existing.id);
+      else edits.addParamKey(d, trackId, clipId, target, playheadFrame());
+    },
+    { icon: "⏱" },
+  );
+}
+
+export function setParamKeyInterp(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+  keyId: string,
+  interp: Interp,
+  preset?: EasingPreset,
+): void {
+  applyEdit(
+    "Set easing",
+    (d) => {
+      const handles =
+        interp === "bezier" ? EASING_PRESETS[preset ?? "ease-in-out"] : undefined;
+      edits.setParamKeyInterp(d, trackId, clipId, target, keyId, interp, handles);
+    },
+    { icon: "📈" },
+  );
+}
+
+/** Removes every keyframe on a parameter, freezing it at the playhead. */
+export function clearParamKeys(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+): void {
+  applyEdit(
+    "Remove keyframes",
+    (d) => {
+      edits.clearParamKeys(d, trackId, clipId, target, playheadFrame());
+    },
+    { icon: "⏱" },
+  );
+}
+
+/** Seeks to the keyframe either side of the playhead, if there is one. */
+export function seekToAdjacentKey(
+  trackId: string,
+  clipId: string,
+  target: edits.ParamTarget,
+  direction: -1 | 1,
+): void {
+  const clip = clipOf(trackId, clipId);
+  if (!clip) return;
+  const keys = edits.paramOf(clip, target)?.keys ?? [];
+  const at = edits.localFrame(clip, playheadFrame());
+
+  const candidates = keys
+    .filter((k) => (direction < 0 ? k.timeFrames < at : k.timeFrames > at))
+    .sort((a, b) =>
+      direction < 0 ? b.timeFrames - a.timeFrames : a.timeFrames - b.timeFrames,
+    );
+  if (candidates.length === 0) return;
+  setPlayheadFrame(clip.startFrame + candidates[0].timeFrames);
+}
+
+function targetKey(target: edits.ParamTarget): string {
+  return target.kind === "clip" ? target.path : `${target.effectId}:${target.uniform}`;
+}
+
+/** Fit mode, blend mode, anchor and the enable flag — none of them animatable. */
+export function setClipSettings(
+  trackId: string,
+  clipId: string,
+  patch: Parameters<typeof edits.setClipSettings>[3],
+): void {
+  applyEdit(
+    "Change clip settings",
+    (d) => {
+      edits.setClipSettings(d, trackId, clipId, patch);
+    },
+    { icon: "🎛" },
+  );
+}
+
+export function setEffectEnabled(
+  trackId: string,
+  clipId: string,
+  effectId: string,
+  enabled: boolean,
+): void {
+  applyEdit(
+    enabled ? "Enable effect" : "Disable effect",
+    (d) => {
+      edits.setEffectEnabled(d, trackId, clipId, effectId, enabled);
+    },
+    { icon: "✨" },
+  );
+}
+
+export function moveEffect(
+  trackId: string,
+  clipId: string,
+  effectId: string,
+  toIndex: number,
+): void {
+  applyEdit(
+    "Reorder effects",
+    (d) => {
+      edits.moveEffect(d, trackId, clipId, effectId, toIndex);
+    },
+    { icon: "✨" },
+  );
+}
+
 // ── Per-clip audio ────────────────────────────────────────────────────
 
-/** Volume as a linear gain, 0..2. Coalesced so a slider drag is one undo step. */
+/**
+ * Volume as a linear gain, 0..2.
+ *
+ * Goes through the generic setter so that a volume with keyframes gets a
+ * keyframe rather than silently having its base value changed underneath the
+ * animation.
+ */
 export function setClipVolume(trackId: string, clipId: string, value: number): void {
-  applyEdit(
+  writeParam(
+    trackId,
+    clipId,
+    edits.clipParamPath("volume"),
+    Math.max(0, Math.min(2, value)),
     "Set volume",
-    (d) => {
-      const clip = withClip(d, trackId, clipId);
-      if (clip)
-        clip.volume = { ...clip.volume, value: Math.max(0, Math.min(2, value)) };
-    },
-    { icon: "🔊", coalesceKey: `volume:${clipId}` },
   );
 }
 
 /** Pan from -1 (left) to +1 (right). */
 export function setClipPan(trackId: string, clipId: string, value: number): void {
-  applyEdit(
+  writeParam(
+    trackId,
+    clipId,
+    edits.clipParamPath("pan"),
+    Math.max(-1, Math.min(1, value)),
     "Set pan",
-    (d) => {
-      const clip = withClip(d, trackId, clipId);
-      if (clip) clip.pan = { ...clip.pan, value: Math.max(-1, Math.min(1, value)) };
-    },
-    { icon: "🎚", coalesceKey: `pan:${clipId}` },
   );
 }
 

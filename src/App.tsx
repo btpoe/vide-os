@@ -13,12 +13,12 @@ import {
   initUIPersistence,
 } from "./stores/ui-store";
 import {
-  projectState,
   doc,
   loadDocument,
   newProject,
   initProjectPersistence,
 } from "./stores/project-store";
+import { frameRateToNumber } from "@/lib/timecode";
 import {
   packBundle,
   mediaTableFromDoc,
@@ -47,7 +47,7 @@ import TimelinePanel from "./panels/TimelinePanel";
 import PreviewPanel from "./panels/PreviewPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import EffectsPanel from "./panels/EffectsPanel";
-import PropertiesPanel from "./panels/PropertiesPanel";
+import PropertiesPanel from "./panels/properties/PropertiesPanel";
 import HistoryPanel from "./panels/HistoryPanel";
 import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
@@ -494,11 +494,10 @@ const App: Component = () => {
       <div class="flex items-center h-6 px-3 bg-panel-header border-t border-border flex-shrink-0 text-[10px] text-muted-foreground gap-4">
         <span>Ready</span>
         <span>
-          {projectState.width}×{projectState.height}
+          {doc().sequence.width}×{doc().sequence.height}
         </span>
-        <span>{projectState.fps} fps</span>
+        <span>{frameRateToNumber(doc().sequence.frameRate).toFixed(2)} fps</span>
         <div class="flex-1" />
-        <span>Chromium Only</span>
       </div>
 
       {/* Export Dialog */}

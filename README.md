@@ -9,7 +9,7 @@ Built with SolidJS, WebGL2, and native Web Components for the docking layout.
 
 **Pre-alpha.** The shell is real — a DaVinci-style dockable panel system, a
 multi-track timeline, a WebGL2 shader pipeline with 8 effects and 4 transitions.
-The media engine underneath it is not yet trustworthy.
+Export is the last part that still produces wrong output.
 
 Specifically, as of now:
 
@@ -21,12 +21,12 @@ Specifically, as of now:
 | Playback                                    | Frame-accurate. One clock derived from AudioContext, WebCodecs decode per clip instance, synchronous rendering. J/K/L shuttle.                                                                   |
 | **Export**                                  | **Produces wrong output.** Frames are timestamped by wall-clock render time rather than by frame index, so a 60 s timeline can export as several minutes of slow motion, with audio out of sync. |
 | Audio                                       | Works. Per-clip volume, pan and fades; track mute/solo; a mixer with meters. Audio-only files play. The offline mix shares one code path with preview.                                           |
-| Effects + keyframes                         | Render in preview and export                                                                                                                                                                     |
+| Effects + keyframes                         | Work. Eight effects, reorderable, individually bypassable, every parameter keyframable. Blur is separable and resolution-independent.                                                            |
 | Undo / redo                                 | Works. Document snapshots, so every edit undoes and redoes exactly.                                                                                                                              |
 | Save / open                                 | Works. `.videos` bundles are portable and carry a media table; older `.videos.json` files migrate on open.                                                                                       |
-| Transitions                                 | Data model and UI exist; the renderer never draws them                                                                                                                                           |
-| Titles / text clips                         | Data model and editor exist; the compositor has no text path                                                                                                                                     |
-| Transform / opacity / crop                  | Modelled but not rendered                                                                                                                                                                        |
+| Transitions                                 | Work. Crossfade, dip-to-black and wipes, refused rather than faked when a clip has no handles to overlap into.                                                                                   |
+| Titles / text clips                         | Work. Rasterised at sequence resolution and composited as ordinary layers, so they inherit transform, opacity and effects.                                                                       |
+| Transform / opacity / crop                  | Work, and keyframe. Position, scale, rotation, anchor, opacity, crop and blend mode, with bezier easing on any of them.                                                                          |
 | Media persistence                           | Works. Handles survive a lapsed permission; a banner offers a one-click re-grant, and moved media relinks by file or folder, verified by content hash.                                           |
 
 Nothing in the UI claims to do something it doesn't: unimplemented controls are

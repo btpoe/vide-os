@@ -4,7 +4,12 @@
  * Effects are chained via ping-pong framebuffers.
  */
 
-import { createProgram, createFramebuffer, drawQuad, FBO_VERTEX } from "./gl-utils";
+import {
+  createProgram,
+  createFramebuffer,
+  drawQuad,
+  PASSTHROUGH_VERTEX,
+} from "./gl-utils";
 
 // ── Effect definitions ──────────────────────────────────────────────
 
@@ -20,6 +25,11 @@ export interface EffectUniform {
 }
 
 export interface EffectDefinition {
+  /**
+   * Run twice, horizontally then vertically, with `u_direction` set by the
+   * pipeline. A separable kernel is two O(n) passes instead of one O(n²) one.
+   */
+  separable?: boolean;
   id: string;
   name: string;
   category: string;
@@ -110,6 +120,19 @@ void main() {
 }
 `;
 
+/**
+ * One axis of a separable Gaussian.
+ *
+ * Run twice — horizontally then vertically — by the pipeline, because this
+ * effect is marked separable. It used to run *once*, horizontally, with the
+ * direction hidden from the UI and defaulted to [1,0]: a one-dimensional smear
+ * labelled "Gaussian Blur".
+ *
+ * The radius is a fraction of frame *height*, not a pixel count, so a blur set
+ * while previewing at half resolution looks the same in a full-resolution
+ * export. The horizontal step is corrected by the aspect ratio so the result is
+ * round rather than stretched.
+ */
 const GAUSSIAN_BLUR_FRAG = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -118,12 +141,23 @@ uniform vec2 u_resolution;
 uniform float u_radius;
 uniform vec2 u_direction;
 out vec4 fragColor;
+
+const float TAPS = 8.0;
+
 void main() {
+  if (u_radius <= 0.0) {
+    fragColor = texture(u_texture, v_uv);
+    return;
+  }
+
+  vec2 aspect = vec2(u_resolution.y / u_resolution.x, 1.0);
   vec4 sum = vec4(0.0);
   float total = 0.0;
-  for (float i = -8.0; i <= 8.0; i += 1.0) {
-    float weight = exp(-0.5 * (i * i) / (u_radius * u_radius + 0.001));
-    vec2 offset = u_direction * i / u_resolution;
+
+  for (float i = -TAPS; i <= TAPS; i += 1.0) {
+    float t = i / TAPS;
+    float weight = exp(-2.0 * t * t);
+    vec2 offset = u_direction * t * u_radius * aspect;
     sum += texture(u_texture, v_uv + offset) * weight;
     total += weight;
   }
@@ -289,15 +323,18 @@ export const EFFECT_DEFINITIONS: EffectDefinition[] = [
     fragmentSource: GAUSSIAN_BLUR_FRAG,
     uniforms: [
       {
+        // A fraction of frame height, so it means the same thing at any
+        // resolution. 0.02 is a gentle blur; 0.15 is heavy.
         name: "u_radius",
         label: "Radius",
         type: "float",
-        default: 3.0,
+        default: 0.02,
         min: 0,
-        max: 20,
-        step: 0.5,
+        max: 0.15,
+        step: 0.002,
       },
       {
+        // Set by the pipeline for each of the two passes, not by the user.
         name: "u_direction",
         label: "Direction",
         type: "vec2",
@@ -305,6 +342,7 @@ export const EFFECT_DEFINITIONS: EffectDefinition[] = [
         hidden: true,
       },
     ],
+    separable: true,
   },
   {
     id: "sharpen",
@@ -400,7 +438,7 @@ function getCompiledEffect(
   const cached = compiledEffects.get(def.id);
   if (cached) return cached;
 
-  const program = createProgram(gl, FBO_VERTEX, def.fragmentSource);
+  const program = createProgram(gl, PASSTHROUGH_VERTEX, def.fragmentSource);
   const uniformLocations = new Map<string, WebGLUniformLocation | null>();
 
   // Cache standard uniforms
@@ -485,6 +523,17 @@ export function resizePipeline(
  * Apply a chain of effects to an input texture, writing to the output.
  * Returns the texture containing the final result.
  */
+/**
+ * Runs an effect chain, returning the texture holding the result.
+ *
+ * Two things worth knowing:
+ *
+ * - **Every target is cleared before it is drawn into.** Ping-pong buffers are
+ *   reused across frames. This is defensive rather than corrective — see the
+ *   note at the clear itself.
+ * - **Separable effects run twice**, horizontally then vertically, with the
+ *   direction supplied here rather than by the user.
+ */
 export function applyEffects(
   ctx: PipelineContext,
   inputTexture: WebGLTexture,
@@ -497,45 +546,43 @@ export function applyEffects(
   let readTexture = inputTexture;
   let writeIndex = 0;
 
-  for (let i = 0; i < effects.length; i++) {
-    const effect = effects[i];
-    const def = EFFECT_DEFINITIONS.find((d) => d.id === effect.definitionId);
-    if (!def) continue;
-
+  /** One draw of one effect, in one direction. */
+  const pass = (
+    def: EffectDefinition,
+    effect: EffectInstance,
+    direction: [number, number] | null,
+  ) => {
     const compiled = getCompiledEffect(gl, def);
-    const isLast = i === effects.length - 1;
 
-    // Bind write target
-    if (isLast) {
-      // Last effect writes to screen (or caller's framebuffer)
-      // We still write to a ping-pong buffer so caller can composite
-      gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.pingPong[writeIndex].fbo);
-    } else {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.pingPong[writeIndex].fbo);
-    }
-
+    gl.bindFramebuffer(gl.FRAMEBUFFER, ctx.pingPong[writeIndex].fbo);
     gl.viewport(0, 0, width, height);
+    // Cleared so nothing of the previous frame survives under a partially
+    // transparent result.
+    // Insurance, not a fix for anything observable today: the quad covers
+    // every texel and `gl.BLEND` is off graph-wide, so a pass already
+    // overwrites whatever the buffer held. It matters the moment an effect
+    // uses `discard` or draws less than the full frame.
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
     gl.useProgram(compiled.program);
 
-    // Bind input texture
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, readTexture);
     const texLoc = compiled.uniformLocations.get("u_texture");
     if (texLoc !== null && texLoc !== undefined) gl.uniform1i(texLoc, 0);
 
-    // Set resolution
     const resLoc = compiled.uniformLocations.get("u_resolution");
     if (resLoc !== null && resLoc !== undefined) gl.uniform2f(resLoc, width, height);
 
-    // Set effect uniforms
     for (const u of def.uniforms) {
       const loc = compiled.uniformLocations.get(u.name);
       if (loc === null || loc === undefined) continue;
 
       let value = effect.values[u.name] ?? u.default;
-
-      // Special case: time uniform
       if (u.name === "u_time") value = ctx.time;
+      // The pipeline owns the direction of a separable pass.
+      if (direction && u.name === "u_direction") value = direction;
 
       if (u.type === "float") {
         gl.uniform1f(loc, value as number);
@@ -555,9 +602,20 @@ export function applyEffects(
 
     drawQuad(gl, quad);
 
-    // Swap read/write
     readTexture = ctx.pingPong[writeIndex].texture;
     writeIndex = 1 - writeIndex;
+  };
+
+  for (const effect of effects) {
+    const def = EFFECT_DEFINITIONS.find((d) => d.id === effect.definitionId);
+    if (!def) continue;
+
+    if (def.separable) {
+      pass(def, effect, [1, 0]);
+      pass(def, effect, [0, 1]);
+    } else {
+      pass(def, effect, null);
+    }
   }
 
   return readTexture;

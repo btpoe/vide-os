@@ -8,7 +8,7 @@ import {
   downloadBlob,
   getSupportedFormats,
 } from "@/renderer/export-engine";
-import { projectState } from "@/stores/project-store";
+import { doc } from "@/stores/project-store";
 
 interface ExportDialogProps {
   open: boolean;
@@ -41,7 +41,7 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
 
     if (blob) {
       const ext = settings().format === "mp4" ? "mp4" : "webm";
-      const name = `${projectState.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.${ext}`;
+      const name = `${doc().name.replace(/[^a-zA-Z0-9_-]/g, "_")}.${ext}`;
       downloadBlob(blob, name);
     }
 

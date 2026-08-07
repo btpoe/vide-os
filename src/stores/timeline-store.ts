@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store";
 import { loadState, createPersistEffect } from "@/lib/persist";
-import { projectState } from "@/stores/project-store";
+import { doc } from "@/stores/project-store";
 
 const TIMELINE_KEY = "timeline";
 
@@ -86,7 +86,7 @@ export function isClipSelected(trackId: string, clipId: string): boolean {
 }
 
 export function selectAllClips(): void {
-  const all: ClipRef[] = projectState.tracks.flatMap((t) =>
+  const all: ClipRef[] = doc().tracks.flatMap((t) =>
     t.clips.map((c) => ({ trackId: t.id, clipId: c.id })),
   );
   setTimelineState("selectedClips", all);

@@ -1,8 +1,7 @@
 import { Component, For, Show, createSignal } from "solid-js";
 import { EFFECT_DEFINITIONS } from "@/renderer/effects-pipeline";
 import { timelineState } from "@/stores/timeline-store";
-import { addEffectToClip, removeEffectFromClip } from "@/stores/project-store";
-import { pushAction } from "@/stores/history-store";
+import { addEffectToClip } from "@/stores/project-store";
 
 const effectIcons: Record<string, string> = {
   brightness_contrast: "☀",
@@ -47,14 +46,10 @@ const EffectsPanel: Component = () => {
       defaults[u.name] = u.default;
     }
 
+    // `addEffectToClip` records its own undo step; the hand-written inverse
+    // that used to sit here added a second, wrong one beside it.
     for (const ref of timelineState.selectedClips) {
-      const effect = addEffectToClip(ref.trackId, ref.clipId, definitionId, defaults);
-      pushAction(
-        `Add ${def.name}`,
-        effectIcons[definitionId] || "✨",
-        () => removeEffectFromClip(ref.trackId, ref.clipId, effect.id),
-        () => addEffectToClip(ref.trackId, ref.clipId, definitionId, defaults),
-      );
+      addEffectToClip(ref.trackId, ref.clipId, definitionId, defaults);
     }
   };
 

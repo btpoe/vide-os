@@ -5,7 +5,7 @@
  * here — never a second implementation of an action that already exists.
  */
 
-import { projectState, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
+import { doc, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
 import {
   togglePlayback,
   pause,
@@ -14,6 +14,7 @@ import {
   seekToFrame,
 } from "@/playback/transport";
 import { secondsToFrames } from "@/lib/timecode";
+import { contentEndFrame } from "@/model/doc";
 import {
   timelineState,
   toggleSnap,
@@ -72,7 +73,9 @@ export const commands: Command[] = [
     label: "Go to End",
     shortcut: "End",
     category: "Playback",
-    run: () => seekTo(projectState.duration),
+    // The end of the content, not a fixed project length — the old
+    // projection reported a default 300s whatever the timeline held.
+    run: () => seekToFrame(contentEndFrame(doc())),
   },
   {
     id: "playback.prevFrame",
@@ -131,7 +134,7 @@ export const commands: Command[] = [
   },
   {
     id: "edit.nudgeLeft",
-    label: "Nudge Left",
+    label: "Nudge Left One Frame",
     shortcut: "Shift+ArrowLeft",
     category: "Editing",
     enabled: hasSelection,
@@ -139,7 +142,7 @@ export const commands: Command[] = [
   },
   {
     id: "edit.nudgeRight",
-    label: "Nudge Right",
+    label: "Nudge Right One Frame",
     shortcut: "Shift+ArrowRight",
     category: "Editing",
     enabled: hasSelection,

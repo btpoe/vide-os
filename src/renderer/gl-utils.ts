@@ -45,8 +45,17 @@ export function createProgram(
 }
 
 /**
- * Create a fullscreen quad VAO for rendering textures.
- * Positions: [-1,-1] to [1,1], UVs: [0,0] to [1,1]
+ * A fullscreen quad with **standard** UVs: `y = -1` maps to `v = 0`.
+ *
+ * This used to bake a vertical flip into the UVs, which then had to be undone
+ * by a second vertex shader for framebuffer-to-framebuffer passes — and the
+ * composite pass used the wrong one of the two, so with more than one visible
+ * video track alternating layers came out upside down.
+ *
+ * There is now exactly **one** flip in the whole renderer, at texture upload
+ * (see `uploadTexture`), which puts every texture in standard GL orientation:
+ * `v = 0` is the bottom of the picture. After that nothing flips anything, and
+ * every pass can use the same quad and the same vertex shader.
  */
 export function createFullscreenQuad(
   gl: WebGL2RenderingContext,
@@ -55,10 +64,9 @@ export function createFullscreenQuad(
   if (!vao) throw new Error("Failed to create VAO");
   gl.bindVertexArray(vao);
 
-  // Position + UV interleaved (V is flipped so video/canvas top-left origin maps correctly)
   const vertices = new Float32Array([
-    // x,    y,   u,   v
-    -1.0, -1.0, 0.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0,
+    // x,    y,    u,   v
+    -1.0, -1.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0,
   ]);
 
   const vbo = gl.createBuffer();
@@ -92,7 +100,14 @@ export function createTexture(gl: WebGL2RenderingContext): WebGLTexture {
 }
 
 /**
- * Upload an image/video/canvas source to a texture.
+ * Uploads an image, video frame or canvas, flipping it into GL orientation.
+ *
+ * Image sources are top-down — row zero is the top of the picture — while GL
+ * texture space puts `v = 0` at the bottom. `UNPACK_FLIP_Y_WEBGL` reconciles
+ * the two here, once, so every texture in the renderer has the same
+ * orientation and no shader has to know where its input came from.
+ *
+ * The flag is restored afterwards so it cannot leak into a raw-data upload.
  */
 export function uploadTexture(
   gl: WebGL2RenderingContext,
@@ -100,7 +115,12 @@ export function uploadTexture(
   source: TexImageSource,
 ): void {
   gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  try {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+  } finally {
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  }
 }
 
 /**
@@ -186,18 +206,6 @@ layout(location = 1) in vec2 a_uv;
 out vec2 v_uv;
 void main() {
   v_uv = a_uv;
-  gl_Position = vec4(a_position, 0.0, 1.0);
-}
-`;
-
-/** Vertex shader for FBO-to-FBO passes (no Y-flip). */
-export const FBO_VERTEX = `#version 300 es
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_uv;
-out vec2 v_uv;
-void main() {
-  // Undo the baked-in V flip so FBO textures are sampled right-side-up
-  v_uv = vec2(a_uv.x, 1.0 - a_uv.y);
   gl_Position = vec4(a_position, 0.0, 1.0);
 }
 `;
