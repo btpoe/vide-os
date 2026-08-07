@@ -32,7 +32,9 @@ Specifically, as of now:
 Nothing in the UI claims to do something it doesn't: unimplemented controls are
 disabled or labelled, not silently inert.
 
-See [`docs/architecture.md`](docs/architecture.md) for where this is going.
+See [`docs/architecture.md`](docs/architecture.md) for where this is going, and
+[`docs/findings.md`](docs/findings.md) for the running log of defects found and
+trade-offs taken.
 
 ## Requirements
 
