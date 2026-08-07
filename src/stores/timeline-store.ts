@@ -21,22 +21,10 @@ export interface TimelineState {
   dragStartTime: number;
   trimming: "left" | "right" | null;
   trimClip: ClipRef | null;
-  scrollLeft: number;
   snapEnabled: boolean;
   trackDragId: string | null;
   trackDropIndex: number | null;
-  /**
-   * Currently only drives ruler tick density — clip geometry is still a
-   * percentage of the whole project duration, so this does not actually zoom.
-   * Replaced by pixels-per-second plus a scroll offset when the timeline
-   * geometry is rewritten. It lives here rather than in the panel so the
-   * zoom commands have something to call.
-   */
-  zoom: number;
 }
-
-export const MIN_ZOOM = 0.25;
-export const MAX_ZOOM = 4;
 
 function loadTimelinePrefs(): Partial<TimelineState> {
   const saved = loadState<PersistedTimelineState>(TIMELINE_KEY);
@@ -51,11 +39,9 @@ const [timelineState, setTimelineState] = createStore<TimelineState>({
   dragStartTime: 0,
   trimming: null,
   trimClip: null,
-  scrollLeft: 0,
   snapEnabled: true,
   trackDragId: null,
   trackDropIndex: null,
-  zoom: 1,
   ...loadTimelinePrefs(),
 });
 
@@ -144,24 +130,6 @@ export function endTrackDrag(): void {
 
 export function toggleSnap(): void {
   setTimelineState("snapEnabled", !timelineState.snapEnabled);
-}
-
-// ── Zoom ─────────────────────────────────────────────────────────────
-
-export function setZoom(zoom: number): void {
-  setTimelineState("zoom", Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom)));
-}
-
-export function zoomIn(): void {
-  setZoom(timelineState.zoom + 0.25);
-}
-
-export function zoomOut(): void {
-  setZoom(timelineState.zoom - 0.25);
-}
-
-export function resetZoom(): void {
-  setZoom(1);
 }
 
 export { timelineState, setTimelineState };

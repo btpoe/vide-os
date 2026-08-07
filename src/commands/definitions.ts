@@ -5,16 +5,26 @@
  * here — never a second implementation of an action that already exists.
  */
 
-import { projectState, setPlayhead, togglePlayback } from "@/stores/project-store";
+import {
+  projectState,
+  setPlayhead,
+  togglePlayback,
+  sequenceFrameRate,
+} from "@/stores/project-store";
+import { secondsToFrames } from "@/lib/timecode";
 import {
   timelineState,
   toggleSnap,
   selectAllClips,
   clearSelection,
+} from "@/stores/timeline-store";
+import {
   zoomIn,
   zoomOut,
-  resetZoom,
-} from "@/stores/timeline-store";
+  zoomToFit,
+  zoomToFrameLevel,
+  revealFrame,
+} from "@/stores/timeline-view-store";
 import { undo, redo, canUndo, canRedo } from "@/stores/history-store";
 import { setSelectedTool } from "@/stores/ui-store";
 import type { Command } from "./registry";
@@ -23,6 +33,17 @@ import { deleteSelectedClips, nudgeSelectedClips, hasSelection } from "./clip-ed
 /** One frame in seconds, at the project's frame rate. */
 function frameStep(): number {
   return 1 / projectState.fps;
+}
+
+/**
+ * Moves the playhead and scrolls it into view.
+ *
+ * Stepping the playhead off the edge of the visible range and leaving it there
+ * would mean the transport controls silently stop showing you anything.
+ */
+function seekTo(seconds: number): void {
+  setPlayhead(seconds);
+  revealFrame(secondsToFrames(seconds, sequenceFrameRate()));
 }
 
 export const commands: Command[] = [
@@ -46,28 +67,28 @@ export const commands: Command[] = [
     label: "Go to Start",
     shortcut: "Home",
     category: "Playback",
-    run: () => setPlayhead(0),
+    run: () => seekTo(0),
   },
   {
     id: "playback.goToEnd",
     label: "Go to End",
     shortcut: "End",
     category: "Playback",
-    run: () => setPlayhead(projectState.duration),
+    run: () => seekTo(projectState.duration),
   },
   {
     id: "playback.prevFrame",
     label: "Previous Frame",
     shortcut: "ArrowLeft",
     category: "Playback",
-    run: () => setPlayhead(projectState.playheadPosition - frameStep()),
+    run: () => seekTo(projectState.playheadPosition - frameStep()),
   },
   {
     id: "playback.nextFrame",
     label: "Next Frame",
     shortcut: "ArrowRight",
     category: "Playback",
-    run: () => setPlayhead(projectState.playheadPosition + frameStep()),
+    run: () => seekTo(projectState.playheadPosition + frameStep()),
   },
   // J/K/L are shuttle controls in a real NLE (reverse / pause / forward, with
   // repeated presses increasing rate). These are plain 5-second jumps until
@@ -77,14 +98,14 @@ export const commands: Command[] = [
     label: "Back 5 Seconds",
     shortcut: "J",
     category: "Playback",
-    run: () => setPlayhead(projectState.playheadPosition - 5),
+    run: () => seekTo(projectState.playheadPosition - 5),
   },
   {
     id: "playback.forward5",
     label: "Forward 5 Seconds",
     shortcut: "L",
     category: "Playback",
-    run: () => setPlayhead(projectState.playheadPosition + 5),
+    run: () => seekTo(projectState.playheadPosition + 5),
   },
 
   // ── Editing ────────────────────────────────────────────────────────
@@ -175,11 +196,18 @@ export const commands: Command[] = [
     run: zoomOut,
   },
   {
-    id: "timeline.zoomReset",
-    label: "Reset Zoom",
+    id: "timeline.zoomFit",
+    label: "Zoom to Fit",
+    shortcut: "Shift+Z",
+    category: "Timeline",
+    run: zoomToFit,
+  },
+  {
+    id: "timeline.zoomFrame",
+    label: "Zoom to Frame Level",
     shortcut: "Mod+0",
     category: "Timeline",
-    run: resetZoom,
+    run: zoomToFrameLevel,
   },
 
   // ── Tools ──────────────────────────────────────────────────────────

@@ -63,18 +63,43 @@ function clampPxPerFrame(pxPerFrame: number, rate: FrameRate): number {
 }
 
 // ── Mapping ───────────────────────────────────────────────────────────
+//
+// Two coordinate spaces, and mixing them up shifts everything by the scroll
+// offset:
+//
+// - **Content space** is measured from frame zero and ignores scrolling. Use it
+//   for anything positioned *inside* the scrolling strip — clips, ruler ticks,
+//   the playhead — because the browser has already translated the strip.
+// - **Viewport space** is measured from the left edge of the visible area. Use
+//   it for input arriving from outside the strip, such as a wheel event's zoom
+//   anchor.
 
-/** Screen x of a frame, relative to the left edge of the scrolling strip. */
+/** Content x of a frame. For elements inside the scrolling strip. */
+export function frameToContentX(view: TimelineView, frame: number): number {
+  return frame * view.pxPerFrame;
+}
+
+/** Frame at a content x. For pointer positions measured against the strip. */
+export function contentXToFrame(view: TimelineView, x: number): number {
+  return Math.round(x / view.pxPerFrame);
+}
+
+/** Frame at a content x, unrounded, for smooth drag deltas. */
+export function contentXToFrameExact(view: TimelineView, x: number): number {
+  return x / view.pxPerFrame;
+}
+
+/** Viewport x of a frame — content position less the scroll offset. */
 export function frameToX(view: TimelineView, frame: number): number {
   return frame * view.pxPerFrame - view.scrollLeftPx;
 }
 
-/** Frame at a screen x. Rounded — the caller wants a frame, not a fraction. */
+/** Frame at a viewport x. Rounded — the caller wants a frame, not a fraction. */
 export function xToFrame(view: TimelineView, x: number): number {
   return Math.round((x + view.scrollLeftPx) / view.pxPerFrame);
 }
 
-/** Frame at a screen x without rounding, for smooth drag deltas. */
+/** Frame at a viewport x without rounding. */
 export function xToFrameExact(view: TimelineView, x: number): number {
   return (x + view.scrollLeftPx) / view.pxPerFrame;
 }
@@ -256,6 +281,7 @@ export function centerOnFrame(
 
 export interface RulerTick {
   frame: number;
+  /** Content x — the ruler is inside the scrolling strip. */
   x: number;
   major: boolean;
 }
@@ -302,7 +328,7 @@ export function rulerTicks(
   for (let frame = Math.max(0, first); frame <= end; frame += stepFrames) {
     ticks.push({
       frame,
-      x: frameToX(view, frame),
+      x: frameToContentX(view, frame),
       // Every fifth tick is emphasised, giving a coarse grid to read against.
       major: (frame / stepFrames) % 5 === 0,
     });

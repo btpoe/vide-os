@@ -245,11 +245,40 @@ duration rather than the same pixels-per-frame.
 the target is visually close, so it feels identical at every zoom. A
 frame-based threshold would be unusably sticky zoomed out and useless zoomed in.
 
+**2.5 — two coordinate spaces, and a gutter between them.** Positions inside
+the scrolling strip must be _content_ coordinates measured from frame zero,
+because the browser has already translated the strip; subtracting the scroll
+offset again moved clips twice as far as the scrollbar. And content x zero is
+not the strip's left edge — the sticky track headers occupy the first 128px, so
+pointer positions need that gutter subtracted too. Both are now named
+explicitly in the geometry (`frameToContentX` vs `frameToX`) with the
+distinction documented, because getting it wrong is silent: everything still
+renders, just in the wrong place.
+
 **2.4 — the anchor invariant yields at frame zero.** Cursor-anchored zoom keeps
 the frame under the pointer fixed, except when holding it would require
 scrolling past the start of the timeline. There is nothing before frame zero to
 show, so the view pins to the left edge instead. Asserted explicitly rather
 than left as an unexplained gap in the property test.
+
+---
+
+### Testing notes
+
+**2.6 — two Playwright harness traps, both of which looked like product bugs.**
+Worth recording because each cost real time and each will recur:
+
+1. _Vite HMR forks module instances._ After editing source without restarting
+   the dev server, the app runs re-timestamped module URLs while a test's
+   `import("/src/stores/…")` binds to the original — so the test reads a stale
+   store and concludes the UI is not reactive. Restart the dev server before
+   driving the app.
+2. _Synthetic events need `composed: true`._ Panels live inside a web
+   component's shadow DOM and Solid delegates from `document`. Without
+   `composed: true` a dispatched event never crosses the boundary and the
+   handler silently does not run.
+
+Neither was a defect in the app. Both were initially diagnosed as one.
 
 ---
 
