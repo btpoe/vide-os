@@ -768,3 +768,48 @@ describe("frame rate independence", () => {
     expect(FPS_30.num).toBe(30); // guard against the fixture drifting
   });
 });
+
+describe("clips may only reference known assets", () => {
+  it("rejects a clip whose asset was never registered", () => {
+    // The contract media import has to satisfy: an entry in the media pool is
+    // not enough, the document's asset table must know about it too. Dropping
+    // unregistered media on the timeline used to throw here.
+    const doc = createEmptyDoc();
+    const t = videoTrackId(doc);
+    const withOrphan = create(doc, (d) => {
+      edits.insertClip(d, t, { type: "asset", assetId: "never-imported" }, 60, {
+        startFrame: 0,
+      });
+    });
+
+    const violations = validateDoc(withOrphan);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].message).toMatch(/unknown asset/);
+  });
+
+  it("accepts the same clip once the asset is registered", () => {
+    const doc = create(createEmptyDoc(), (d) => {
+      edits.upsertAsset(d, asset("registered"));
+    });
+    const t = videoTrackId(doc);
+    const next = edit(doc, (d) => {
+      edits.insertClip(d, t, { type: "asset", assetId: "registered" }, 60, {
+        startFrame: 0,
+      });
+    });
+    expect(validateDoc(next)).toEqual([]);
+  });
+
+  it("clamps a clip to the source length on insert", () => {
+    // Dropping a 30s clip from a 10s file must produce a 10s clip, not one
+    // that reads past the end into a silent freeze frame.
+    const doc = baseDoc();
+    const t = videoTrackId(doc);
+    const next = edit(doc, (d) => {
+      edits.insertClip(d, t, { type: "asset", assetId: "a" }, 900, {
+        startFrame: 0,
+      });
+    });
+    expect(clipsOf(next, t)[0].durationFrames).toBe(300);
+  });
+});

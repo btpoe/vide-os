@@ -462,13 +462,46 @@ export async function removeFileHandle(mediaId: string): Promise<void> {
   });
 }
 
+type PermissionCapable = FileSystemHandle & {
+  queryPermission?: (d: { mode: "read" | "readwrite" }) => Promise<PermissionState>;
+  requestPermission?: (d: { mode: "read" | "readwrite" }) => Promise<PermissionState>;
+};
+
+/**
+ * Whether we already hold read permission. Never prompts, so this is safe on
+ * startup.
+ *
+ * This used to fall through to `requestPermission`, which the browser refuses
+ * outside a user gesture — so calling it from `onMount` always failed, and the
+ * caller treated that failure as "the media is gone".
+ */
 export async function verifyFilePermission(
   handle: FileSystemFileHandle,
 ): Promise<boolean> {
-  const opts = { mode: "read" as const };
-  if ((await (handle as any).queryPermission(opts)) === "granted") return true;
-  if ((await (handle as any).requestPermission(opts)) === "granted") return true;
-  return false;
+  const query = (handle as PermissionCapable).queryPermission;
+  if (!query) return true;
+  try {
+    return (await query.call(handle, { mode: "read" })) === "granted";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Asks for read permission. **Must be called from a user gesture** — the
+ * browser rejects it otherwise.
+ */
+export async function requestFilePermission(
+  handle: FileSystemFileHandle,
+): Promise<boolean> {
+  if (await verifyFilePermission(handle)) return true;
+  const request = (handle as PermissionCapable).requestPermission;
+  if (!request) return true;
+  try {
+    return (await request.call(handle, { mode: "read" })) === "granted";
+  } catch {
+    return false;
+  }
 }
 
 // ── Format helpers ────────────────────────────────────────────────────

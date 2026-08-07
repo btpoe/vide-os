@@ -24,6 +24,7 @@
  */
 
 import { createStore, produce, reconcile } from "solid-js/store";
+import { create } from "mutative";
 import { createSignal, createEffect, batch } from "solid-js";
 import {
   type ProjectDoc,
@@ -259,6 +260,30 @@ export function newProject(): void {
 
 // ── Assets ────────────────────────────────────────────────────────────
 
+/**
+ * Adds or updates an asset **without** recording an undo step.
+ *
+ * Importing media is not a timeline edit. Making it undoable would clutter the
+ * history with one entry per file and desync the document from the media pool,
+ * which has no undo of its own.
+ *
+ * A clip may not reference an asset the document does not know about — the
+ * invariants reject it — so this must run before any clip using it is created.
+ *
+ * Known limitation: because the past snapshots predate the registration, an
+ * asset registered after an undo is lost on the subsequent redo. It is
+ * re-registered the next time the media is used.
+ */
+export function registerAsset(asset: Asset): void {
+  setHistory((state) => {
+    const present = create(state.present, (d) => {
+      edits.upsertAsset(d, asset);
+    });
+    return present === state.present ? state : { ...state, present };
+  });
+}
+
+/** Registers an asset as an undoable edit. Use `registerAsset` for imports. */
 export function upsertAsset(asset: Asset): void {
   applyEdit(`Import ${asset.name}`, (d) => edits.upsertAsset(d, asset), {
     icon: "📥",
