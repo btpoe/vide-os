@@ -20,11 +20,11 @@ it.
 
 | #   | Defect                                                                                                                | Consequence                                                                                      | Fixed in                                      |
 | --- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| P1  | Export timestamps frames by wall-clock render time, not frame index (`export-engine.ts:146,211-259`)                  | A 60 s timeline rendering at ~8 fps exports as ~225 s of slow motion                             | Phase 5                                       |
-| P2  | Offline audio mixdown played into the recorder in real time while video renders at render speed                       | Audio can never line up with picture                                                             | Phase 5                                       |
+| P1  | Export timestamps frames by wall-clock render time, not frame index (`export-engine.ts:146,211-259`)                  | A 60 s timeline rendering at ~8 fps exports as ~225 s of slow motion                             | Phase 5 ✓                                     |
+| P2  | Offline audio mixdown played into the recorder in real time while video renders at render speed                       | Audio can never line up with picture                                                             | Phase 5 ✓                                     |
 | P3  | `mixTimelineAudio` sums all tracks with no type filter, and every video clip has an auto-created duplicate audio clip | Every clip's audio mixed twice at 2× amplitude, clipping                                         | Phase 1c (duplicate removed), Phase 3 (mixer) |
-| P4  | `.mp4` extension chosen from the _requested_ format while the mime falls back to WebM                                 | A WebM file named `.mp4`; the fallback mime also has no audio codec                              | Phase 5                                       |
-| P5  | Compositor built at `projectState.width/height`, ignoring export settings                                             | The 4K export preset renders 1080p and upscales                                                  | Phase 5                                       |
+| P4  | `.mp4` extension chosen from the _requested_ format while the mime falls back to WebM                                 | A WebM file named `.mp4`; the fallback mime also has no audio codec                              | Phase 5 ✓                                     |
+| P5  | Compositor built at `projectState.width/height`, ignoring export settings                                             | The 4K export preset renders 1080p and upscales                                                  | Phase 5 ✓                                     |
 | P6  | Seeks within 0.02 s are skipped (`frame-source.ts:73`) — wider than a frame at 60 fps                                 | Duplicate frames; playback is not frame-accurate                                                 | Phase 3                                       |
 | P7  | `seeked` handlers not keyed to a specific seek                                                                        | Overlapping seeks resolve against each other                                                     | Phase 3                                       |
 | P8  | One `<video>` element per _media file_ rather than per _clip_                                                         | Two clips of one source fight over `currentTime`                                                 | Phase 3                                       |
@@ -440,6 +440,71 @@ deletes outright. Migrating it first would be work thrown away, so instead
 `test/unit/no-compat-projection.test.ts` holds an exemption list of exactly two
 files and fails if any other file reads the projection. When the list can be
 emptied, the projection and that test go together.
+
+---
+
+## Phase 5 — deterministic export
+
+### Found
+
+- **`sanitise("///")` produced `_.mp4`.** Exactly the bug fixed in Phase 1 for
+  `projectFileName`, written again from scratch in the new exporter, and caught
+  by a test copied from the same instinct. The two now share `safeFileStem`.
+- **Export was using the editor's decoder pool.** The engine's own comment said
+  export should create its own with a smaller budget so a background export
+  cannot starve the editor — and it did not. Fixed, and it is what makes the
+  leak assertion meaningful: export disposes its decoders when it finishes, so
+  `openFrameCount()` is zero the moment it returns rather than "eventually,
+  after the caches are dropped".
+
+### Decided
+
+- **The frame rate is not an export setting.** It comes from the sequence. The
+  old dialog offered 24/30/60 regardless of the timeline, which means
+  resampling, which nothing implemented. The dialog shows the rate instead of
+  asking for it.
+- **Containers are probed with the real encoder, at the real resolution.** A
+  codec that encodes 1080p can fail at 4K on the same machine, so the question
+  is asked per combination and re-asked whenever the size changes. A container
+  with no usable codec is shown disabled with the reason rather than silently
+  substituted — which is how a WebM file ended up named `.mp4`.
+- **Timestamps are exact rational arithmetic.** `frame × den / num` in a
+  double, not accumulated float seconds. Over any timeline anyone will build
+  the error stays far below a microsecond, so the value the muxer stores is
+  exact. The 29.97 case is tested specifically, since that is where accumulated
+  float error shows up first.
+- **Positioned writes, not append-only.** MP4 patches its header once the sizes
+  are known, so streaming to disk needs seeking. `platform.fs.createWritable`
+  returns a `WritableStream<PositionedChunk>` — the shape
+  `FileSystemWritableFileStream` already accepts — and the test reassembles a
+  sparse file from the chunks and demuxes it, because an append-only sink would
+  produce a corrupt file that still looks plausible.
+- **Export awaits every frame; preview never does.** The two schedulers now
+  differ in exactly one place, a `FrameLookup` hook on `renderFrame`.
+  Everything else — scene building, compositing, effects, transitions — is
+  literally the same code, so the preview cannot drift from the file.
+
+### The compatibility projection is gone
+
+Deleting `renderer/export-engine.ts` removed the last reader, so `projectState`
+and the whole seconds-shaped shadow model went with it, along with the
+seconds-based keyframe API (`addKeyframe`/`updateKeyframe`/`removeAllKeyframes`
+/`getEffectValueAtTime`/`interpolateKeyframes`) and a handful of other compat
+helpers that no longer had callers. §1.7 is closed, and
+`test/unit/no-compat-projection.test.ts` — the ratchet that kept it from
+growing new readers — has been deleted along with the thing it guarded.
+
+What remains from that era is a dozen seconds-based operations in the project
+store. They are thin wrappers onto frame-based edits rather than a parallel
+model, and they are what the timeline panel still calls; they go when it is
+rewritten.
+
+### Deferred
+
+- **The media engine does not run in a worker.** The plan listed it under this
+  phase. It is a responsiveness improvement, not a correctness one — the
+  facade is already async precisely so this can be a transport swap — and none
+  of the phase's exit criteria depend on it.
 
 ---
 

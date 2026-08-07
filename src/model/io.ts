@@ -201,10 +201,17 @@ export function readBundleExtra(data: Bytes, path: string): Bytes | null {
 
 /** Filename for a project, safe across filesystems. */
 export function projectFileName(name: string): string {
-  const safe = name
-    .replace(/[^\w\-. ]+/g, "_")
-    // Trim the padding too: a name of only separators sanitises to "_", which
-    // is truthy and would otherwise produce a file called "_.videos".
-    .replace(/^[_\s.]+|[_\s.]+$/g, "");
-  return `${safe || "Untitled Project"}.videos`;
+  return `${safeFileStem(name, "Untitled Project")}.videos`;
+}
+
+/**
+ * A project name reduced to something every filesystem accepts.
+ *
+ * The trimming pass is the part that matters: a name of only separators
+ * sanitises to `"_"`, which is truthy, and would otherwise produce a file
+ * called `_.videos`. Shared with the exporter so both cannot drift.
+ */
+export function safeFileStem(name: string, fallback: string): string {
+  const safe = name.replace(/[^\w\-. ]+/g, "_").replace(/^[_\s.]+|[_\s.]+$/g, "");
+  return safe || fallback;
 }

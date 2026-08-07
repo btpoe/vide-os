@@ -18,7 +18,7 @@ import {
   type LayerImage,
 } from "./graph";
 import { rasteriseSolid, rasteriseText } from "./text-renderer";
-import { mediaEngine } from "@/media/engine";
+import { mediaEngine, type BorrowedFrame } from "@/media/engine";
 import { doc as currentDoc } from "@/stores/project-store";
 import { clipAt, type Clip, type ProjectDoc } from "@/model/doc";
 import { framesToSeconds, secondsToFrames } from "@/lib/timecode";
@@ -47,6 +47,22 @@ interface Borrowed {
   release: () => void;
 }
 
+/**
+ * How a pass obtains a decoded frame.
+ *
+ * The two schedulers differ here and nowhere else. Preview uses `tryGet`,
+ * which never waits — a frame that is not ready yet is skipped for this pass,
+ * which is what stops renders overlapping. Export awaits every frame before
+ * rendering and hands them in through this hook, which is what makes it
+ * deterministic. Returning a reference transfers ownership: the pass releases
+ * it.
+ */
+export type FrameLookup = (
+  document_: ProjectDoc,
+  clip: Clip,
+  frame: number,
+) => BorrowedFrame | null;
+
 function findClipById(document_: ProjectDoc, clipId: string): Clip | undefined {
   for (const track of document_.tracks) {
     const clip = track.clips.find((c) => c.id === clipId);
@@ -61,7 +77,12 @@ function findClipById(document_: ProjectDoc, clipId: string): Clip | undefined {
  * Frames are borrowed, not copied, so every reference taken here is collected
  * and released once the pass finishes.
  */
-function makeResolver(document_: ProjectDoc, scene: Scene, borrowed: Borrowed[]) {
+function makeResolver(
+  document_: ProjectDoc,
+  scene: Scene,
+  borrowed: Borrowed[],
+  lookup: FrameLookup,
+) {
   return (layer: Layer): LayerImage | null => {
     if (layer.source.type === "text") {
       const raster = rasteriseText(layer.source.style, scene.width, scene.height);
@@ -77,7 +98,7 @@ function makeResolver(document_: ProjectDoc, scene: Scene, borrowed: Borrowed[])
     const clip = findClipById(document_, layer.clipId);
     if (!clip) return null;
 
-    const frame = mediaEngine.tryGet(document_, clip, scene.frame);
+    const frame = lookup(document_, clip, scene.frame);
     if (!frame) return null;
 
     borrowed.push(frame);
@@ -95,20 +116,28 @@ function makeResolver(document_: ProjectDoc, scene: Scene, borrowed: Borrowed[])
  * Synchronous. A layer whose frame is not yet decoded is skipped for this pass
  * rather than awaited, which is what stops renders overlapping.
  */
-export function renderFrame(comp: Compositor, frame: number): void {
+export function renderFrame(
+  comp: Compositor,
+  frame: number,
+  lookup: FrameLookup = previewLookup,
+  document_: ProjectDoc = currentDoc(),
+): void {
   if (comp.disposed) return;
 
-  const document_ = currentDoc();
   const scene = buildScene(document_, frame);
   const borrowed: Borrowed[] = [];
 
   try {
-    composeFrame(comp, scene, makeResolver(document_, scene, borrowed));
+    composeFrame(comp, scene, makeResolver(document_, scene, borrowed, lookup));
   } finally {
     // In a finally so a GL error cannot pin frames in the cache forever.
     for (const frameRef of borrowed) frameRef.release();
   }
 }
+
+/** The preview's lookup: take what is decoded, never wait for what is not. */
+const previewLookup: FrameLookup = (document_, clip, frame) =>
+  mediaEngine.tryGet(document_, clip, frame);
 
 /** Renders at a time in seconds, for callers still thinking in seconds. */
 export function renderAtSeconds(comp: Compositor, seconds: number): void {

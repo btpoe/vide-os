@@ -15,6 +15,7 @@ import type {
   PickFilesOptions,
   PickSaveOptions,
   PlatformFs,
+  PositionedChunk,
 } from "../types";
 import { deleteHandle, getHandle, putHandle } from "./handles";
 
@@ -167,6 +168,31 @@ export const webFs: PlatformFs = {
       await writable.abort().catch(() => undefined);
       throw error;
     }
+  },
+
+  async createWritable(ref: FileRef): Promise<WritableStream<PositionedChunk> | null> {
+    const handle = asFileHandle(ref);
+    if (typeof handle.createWritable !== "function") return null;
+
+    const stream = await handle.createWritable();
+    // Adapted rather than returned directly: `FileSystemWritableFileStream` is
+    // a WritableStream of a wider union, and narrowing it here keeps the
+    // positioned-chunk contract visible at the seam.
+    return new WritableStream<PositionedChunk>({
+      async write(chunk) {
+        await stream.write({
+          type: "write",
+          position: chunk.position,
+          data: chunk.data,
+        });
+      },
+      async close() {
+        await stream.close();
+      },
+      async abort() {
+        await stream.abort().catch(() => undefined);
+      },
+    });
   },
 
   async stat(ref: FileRef): Promise<{ size: number; mtime?: number }> {

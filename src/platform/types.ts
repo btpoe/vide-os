@@ -23,6 +23,13 @@
 export type Bytes = Uint8Array<ArrayBuffer>;
 
 /** An opaque reference to a file. Only the platform knows what's inside. */
+/** A write at a byte offset, as `FileSystemWritableFileStream` accepts. */
+export interface PositionedChunk {
+  type: "write";
+  data: Bytes;
+  position: number;
+}
+
 export interface FileRef {
   /** Stable within a session; not persistent. Use `persistRef` for that. */
   id: string;
@@ -86,6 +93,18 @@ export interface PlatformFs {
   readBlob(ref: FileRef, range?: ByteRange): Promise<Blob>;
 
   write(ref: FileRef, data: Bytes | Blob | ReadableStream<Bytes>): Promise<void>;
+
+  /**
+   * Opens a file for *positioned* writes.
+   *
+   * `write` is enough for anything produced in one piece. A muxer is not: MP4
+   * patches its header once the sizes are known, so it has to seek backwards,
+   * and a 4K feature-length export cannot be held in memory until it is
+   * complete. Chunks mirror `FileSystemWritableFileStream`'s write parameters.
+   *
+   * Null when this platform cannot do it, so callers fall back to a `Blob`.
+   */
+  createWritable?(ref: FileRef): Promise<WritableStream<PositionedChunk> | null>;
 
   stat(ref: FileRef): Promise<{ size: number; mtime?: number }>;
 
