@@ -1,30 +1,45 @@
 import { Component, onMount, onCleanup, createSignal } from "solid-js";
-import { projectState, setPlayhead, togglePlayback } from "@/stores/project-store";
+import { doc, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
+import { contentEndFrame } from "@/model/doc";
+import { framesToTimecode } from "@/lib/timecode";
 import {
   createCompositor,
   disposeCompositor,
   renderBlackFrame,
+  resizeCompositor,
   type Compositor,
 } from "@/renderer/compositor";
+import { startPreview, invalidatePreview } from "@/playback/scheduler";
 import {
-  createPlaybackEngine,
-  startRenderLoop,
-  disposePlaybackEngine,
-  type PlaybackEngine,
-} from "@/renderer/playback-engine";
+  isPlaying,
+  pause,
+  play,
+  seekToFrame,
+  shuttle,
+  togglePlayback,
+} from "@/playback/transport";
+
+/**
+ * How much smaller than the project the preview renders.
+ *
+ * Half resolution is a reasonable default; the quality ladder that adapts this
+ * to measured frame time lands with the render graph.
+ */
+const PREVIEW_SCALE = 0.5;
 
 const PreviewPanel: Component = () => {
   let canvasRef: HTMLCanvasElement | undefined;
+  let containerRef: HTMLDivElement | undefined;
   let compositor: Compositor | null = null;
-  let engine: PlaybackEngine | null = null;
+  let scheduler: { stop: () => void } | null = null;
   const [glReady, setGlReady] = createSignal(false);
 
   onMount(() => {
     if (!canvasRef) return;
 
-    // Set canvas to half project resolution for performance
-    canvasRef.width = Math.round(projectState.width / 2);
-    canvasRef.height = Math.round(projectState.height / 2);
+    const sequence = doc().sequence;
+    canvasRef.width = Math.round(sequence.width * PREVIEW_SCALE);
+    canvasRef.height = Math.round(sequence.height * PREVIEW_SCALE);
 
     compositor = createCompositor(canvasRef);
     if (!compositor) {
@@ -34,30 +49,57 @@ const PreviewPanel: Component = () => {
 
     setGlReady(true);
     renderBlackFrame(compositor);
+    scheduler = startPreview(compositor);
 
-    // Start the render loop
-    engine = createPlaybackEngine(compositor);
-    startRenderLoop(engine);
+    // The canvas is fixed at a fraction of the project resolution, but the
+    // element it sits in is not — a resize needs a redraw, which the render
+    // loop cannot observe on its own. `resizeCompositor` existed before and
+    // was never called from anywhere.
+    if (containerRef) {
+      const observer = new ResizeObserver(() => {
+        if (!compositor) return;
+        const next = doc().sequence;
+        const width = Math.round(next.width * PREVIEW_SCALE);
+        const height = Math.round(next.height * PREVIEW_SCALE);
+        if (compositor.width !== width || compositor.height !== height) {
+          canvasRef.width = width;
+          canvasRef.height = height;
+          resizeCompositor(compositor, width, height);
+        }
+        invalidatePreview(compositor);
+      });
+      observer.observe(containerRef);
+      onCleanup(() => observer.disconnect());
+    }
   });
 
   onCleanup(() => {
-    if (engine) disposePlaybackEngine(engine);
+    scheduler?.stop();
     if (compositor) disposeCompositor(compositor);
   });
 
-  const formatTime = (seconds: number): string => {
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    const f = Math.floor((seconds % 1) * projectState.fps);
-    return `${m.toString().padStart(2, "0")}:${s
-      .toString()
-      .padStart(2, "0")}:${f.toString().padStart(2, "0")}`;
-  };
+  const endFrame = () => contentEndFrame(doc());
+
+  const Transport: Component<{
+    onClick: () => void;
+    title: string;
+    children: string;
+  }> = (props) => (
+    <button
+      class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+      onClick={props.onClick}
+      title={props.title}
+    >
+      {props.children}
+    </button>
+  );
 
   return (
     <div class="h-full flex flex-col bg-black">
-      {/* Canvas area */}
-      <div class="flex-1 flex items-center justify-center p-2 min-h-0">
+      <div
+        ref={containerRef}
+        class="flex-1 flex items-center justify-center p-2 min-h-0"
+      >
         <div class="relative w-full h-full flex items-center justify-center">
           <canvas
             ref={canvasRef}
@@ -66,72 +108,52 @@ const PreviewPanel: Component = () => {
           {!glReady() && (
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
               <span class="text-muted-foreground/30 text-lg font-semibold">
-                {projectState.width} × {projectState.height}
+                {doc().sequence.width} × {doc().sequence.height}
               </span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Transport controls */}
       <div class="flex items-center justify-center gap-2 py-2 px-3 border-t border-border bg-card">
-        <button
-          class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-          onClick={() => setPlayhead(0)}
-          title="Go to start (Home)"
-        >
+        <Transport onClick={() => seekToFrame(0)} title="Go to start (Home)">
           ⏮
-        </button>
-        <button
-          class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-          onClick={() => setPlayhead(Math.max(0, projectState.playheadPosition - 5))}
-          title="Rewind 5s (J)"
-        >
+        </Transport>
+        <Transport onClick={() => shuttle(-1)} title="Shuttle back (J)">
           ⏪
-        </button>
+        </Transport>
         <button
           class={`p-2 text-base rounded-full ${
-            projectState.isPlaying
+            isPlaying()
               ? "bg-destructive text-destructive-foreground"
               : "bg-primary text-primary-foreground"
           } hover:opacity-90`}
-          onClick={() => togglePlayback()}
+          onClick={togglePlayback}
           title="Play/Pause (Space)"
         >
-          {projectState.isPlaying ? "⏸" : "▶"}
+          {isPlaying() ? "⏸" : "▶"}
         </button>
-        <button
-          class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-          onClick={() =>
-            setPlayhead(
-              Math.min(projectState.duration, projectState.playheadPosition + 5),
-            )
-          }
-          title="Forward 5s (L)"
-        >
+        <Transport onClick={() => (isPlaying() ? pause() : play())} title="Stop (K)">
+          ⏹
+        </Transport>
+        <Transport onClick={() => shuttle(1)} title="Shuttle forward (L)">
           ⏩
-        </button>
-        <button
-          class="p-1.5 text-sm rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-          onClick={() => setPlayhead(projectState.duration)}
-          title="Go to end (End)"
-        >
+        </Transport>
+        <Transport onClick={() => seekToFrame(endFrame())} title="Go to end (End)">
           ⏭
-        </button>
-        <div class="mx-3 font-mono text-xs text-muted-foreground">
-          {formatTime(projectState.playheadPosition)}
+        </Transport>
+
+        <div class="mx-3 font-mono text-xs text-muted-foreground tabular-nums">
+          {framesToTimecode(playheadFrame(), sequenceFrameRate())}
         </div>
+
         <div class="flex-1" />
         <button
           class="px-2 py-1 text-[10px] rounded bg-secondary text-muted-foreground hover:text-foreground"
           onClick={() => {
-            if (canvasRef) {
-              if (document.fullscreenElement) {
-                void document.exitFullscreen();
-              } else {
-                canvasRef.requestFullscreen().catch(() => {});
-              }
-            }
+            if (!canvasRef) return;
+            if (document.fullscreenElement) void document.exitFullscreen();
+            else void canvasRef.requestFullscreen().catch(() => undefined);
           }}
           title="Toggle fullscreen"
         >

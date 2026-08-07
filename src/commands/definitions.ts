@@ -5,12 +5,14 @@
  * here — never a second implementation of an action that already exists.
  */
 
+import { projectState, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
 import {
-  projectState,
-  setPlayhead,
   togglePlayback,
-  sequenceFrameRate,
-} from "@/stores/project-store";
+  pause,
+  shuttle,
+  stepFrames,
+  seekToFrame,
+} from "@/playback/transport";
 import { secondsToFrames } from "@/lib/timecode";
 import {
   timelineState,
@@ -30,11 +32,6 @@ import { setSelectedTool } from "@/stores/ui-store";
 import type { Command } from "./registry";
 import { deleteSelectedClips, nudgeSelectedClips, hasSelection } from "./clip-edits";
 
-/** One frame in seconds, at the project's frame rate. */
-function frameStep(): number {
-  return 1 / projectState.fps;
-}
-
 /**
  * Moves the playhead and scrolls it into view.
  *
@@ -42,8 +39,9 @@ function frameStep(): number {
  * would mean the transport controls silently stop showing you anything.
  */
 function seekTo(seconds: number): void {
-  setPlayhead(seconds);
-  revealFrame(secondsToFrames(seconds, sequenceFrameRate()));
+  const frame = secondsToFrames(seconds, sequenceFrameRate());
+  seekToFrame(frame);
+  revealFrame(frame);
 }
 
 export const commands: Command[] = [
@@ -56,11 +54,11 @@ export const commands: Command[] = [
     run: togglePlayback,
   },
   {
-    id: "playback.toggle.k",
-    label: "Play / Pause (K)",
+    id: "playback.stop",
+    label: "Stop",
     shortcut: "K",
     category: "Playback",
-    run: togglePlayback,
+    run: pause,
   },
   {
     id: "playback.goToStart",
@@ -81,31 +79,37 @@ export const commands: Command[] = [
     label: "Previous Frame",
     shortcut: "ArrowLeft",
     category: "Playback",
-    run: () => seekTo(projectState.playheadPosition - frameStep()),
+    run: () => {
+      stepFrames(-1);
+      revealFrame(playheadFrame());
+    },
   },
   {
     id: "playback.nextFrame",
     label: "Next Frame",
     shortcut: "ArrowRight",
     category: "Playback",
-    run: () => seekTo(projectState.playheadPosition + frameStep()),
+    run: () => {
+      stepFrames(1);
+      revealFrame(playheadFrame());
+    },
   },
-  // J/K/L are shuttle controls in a real NLE (reverse / pause / forward, with
-  // repeated presses increasing rate). These are plain 5-second jumps until
-  // the playback clock supports variable rate.
+  // Real J/K/L shuttle: repeated presses step through the rate ladder, K
+  // stops. These used to be plain five-second jumps, which the shortcut sheet
+  // nonetheless described as shuttle.
   {
-    id: "playback.back5",
-    label: "Back 5 Seconds",
+    id: "playback.shuttleBack",
+    label: "Shuttle Back",
     shortcut: "J",
     category: "Playback",
-    run: () => seekTo(projectState.playheadPosition - 5),
+    run: () => shuttle(-1),
   },
   {
-    id: "playback.forward5",
-    label: "Forward 5 Seconds",
+    id: "playback.shuttleForward",
+    label: "Shuttle Forward",
     shortcut: "L",
     category: "Playback",
-    run: () => seekTo(projectState.playheadPosition + 5),
+    run: () => shuttle(1),
   },
 
   // ── Editing ────────────────────────────────────────────────────────

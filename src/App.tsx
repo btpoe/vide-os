@@ -26,6 +26,7 @@ import {
   projectFileName,
 } from "./model/io";
 import { initTimelinePersistence } from "./stores/timeline-store";
+import { initTransport } from "./playback/transport";
 import { restoreMedia } from "./stores/media-store";
 import { registerPanel, type PanelDefinition } from "./web-components/registry";
 import {
@@ -148,6 +149,7 @@ const App: Component = () => {
     initProjectPersistence();
     initTimelinePersistence();
     initUIPersistence();
+    initTransport();
 
     // Restore media entries from persisted file handles
     void restoreMedia();

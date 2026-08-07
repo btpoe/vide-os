@@ -24,7 +24,7 @@ import {
   type RegisteredAsset,
 } from "./asset-registry";
 import { DecoderPool } from "./decoder-pool";
-import { leakCount } from "./frame-cache";
+import { openFrameCount } from "./frame-cache";
 import type { FileRef } from "@/platform";
 
 /** A frame borrowed from the cache. Must be released. */
@@ -154,7 +154,7 @@ export class MediaEngine {
   // ── Diagnostics ─────────────────────────────────────────────────────
 
   stats() {
-    return { ...this.pool.stats(), leaked: leakCount() };
+    return { ...this.pool.stats(), openFrames: openFrameCount() };
   }
 
   dispose(): void {

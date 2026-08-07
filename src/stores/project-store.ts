@@ -615,8 +615,14 @@ export function setPlayhead(position: number): void {
   setPlayheadFrame(toFrames(position));
 }
 
-export function togglePlayback(): void {
-  setIsPlaying((playing) => !playing);
+/**
+ * Mirrors the transport's play state into the store.
+ *
+ * The clock owns whether we are playing; this exists only so the compatibility
+ * projection can keep reporting `projectState.isPlaying`.
+ */
+export function setPlayingMirror(playing: boolean): void {
+  setIsPlaying(playing);
 }
 
 // ── Effects ───────────────────────────────────────────────────────────

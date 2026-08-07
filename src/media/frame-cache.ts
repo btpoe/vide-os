@@ -4,9 +4,9 @@
  * A `VideoSample` wraps a `VideoFrame`, which holds a GPU or system-memory
  * buffer that the garbage collector will not reclaim. Leak enough of them and
  * the browser stops handing out decoders — quietly, mid-edit. So every frame
- * here is refcounted, released explicitly, and *counted*: `leakCount()` reports
- * created-minus-closed, surfaced in the debug HUD and asserted at teardown in
- * the browser tests.
+ * here is refcounted, released explicitly, and *counted*: `openFrameCount()`
+ * reports created-minus-closed, surfaced in the debug HUD and asserted to be
+ * zero after dispose in the browser tests.
  *
  * Hoping for `.close()` discipline does not work. Measuring it does.
  */
@@ -35,7 +35,7 @@ export interface FrameCacheStats {
   budgetBytes: number;
   created: number;
   closed: number;
-  leaked: number;
+  open: number;
   hits: number;
   misses: number;
 }
@@ -43,8 +43,15 @@ export interface FrameCacheStats {
 let created = 0;
 let closed = 0;
 
-/** Frames handed out but never closed. Should be zero once everything settles. */
-export function leakCount(): number {
+/**
+ * Frames currently open — created and not yet closed.
+ *
+ * A cached frame is legitimately open, so a non-zero count during use is
+ * expected. What matters is that it returns to **zero after dispose**; that is
+ * asserted at the end of every browser test, and it is the only reliable way
+ * to know `.close()` discipline is being kept.
+ */
+export function openFrameCount(): number {
   return created - closed;
 }
 
@@ -173,7 +180,7 @@ export class FrameCache {
       budgetBytes: this.budgetBytes,
       created,
       closed,
-      leaked: leakCount(),
+      open: openFrameCount(),
       hits: this.hits,
       misses: this.misses,
     };

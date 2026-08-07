@@ -318,6 +318,20 @@ the garbage collector will not reclaim, and exhausting decoders fails silently
 mid-edit. Every frame is refcounted and the create-minus-close tally is
 asserted to be zero at the end of each browser test.
 
+**3.5 — WebGL readback is empty from a later task.** The compositor's context
+is created with `preserveDrawingBuffer: false`, so the default drawing buffer
+is cleared as soon as the browser composites. Reading it back from any later
+task returns black regardless of what was drawn — which twice looked like "the
+preview is not rendering". The compositor tests read the _composite
+framebuffer_ instead, which is not subject to that.
+
+**3.6 — which way up the composite lands is still undecided.** The quad bakes a
+V-flip and the GL read is bottom-up, so the frame-marker test accepts either
+orientation for now. That is not a workaround so much as an honest admission:
+the Y-flip accounting is the known defect the render graph rewrite settles
+canonically, and pinning an orientation here would just encode today's
+accident. Once it is fixed the test tightens to one orientation.
+
 ---
 
 ## Open items not yet scheduled

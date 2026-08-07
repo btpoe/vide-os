@@ -25,19 +25,10 @@ import {
   disposeEffects,
   EFFECT_DEFINITIONS,
 } from "./effects-pipeline";
-import {
-  type FrameSource,
-  getCachedFrameSource,
-  seekFrameSource,
-  getFrameSource,
-} from "./frame-source";
-import {
-  projectState,
-  getEffectValueAtTime,
-  type Clip,
-  type Track,
-} from "@/stores/project-store";
-import { mediaState } from "@/stores/media-store";
+import { mediaEngine } from "@/media/engine";
+import { doc as currentDoc, getEffectValueAtTime } from "@/stores/project-store";
+import { clipAt, type Clip as DocClip, type Track as DocTrack } from "@/model/doc";
+import { framesToSeconds, secondsToFrames } from "@/lib/timecode";
 
 // ── Compositing shader (blends layer on top of existing content) ────
 
@@ -120,8 +111,8 @@ export function createCompositor(canvas: HTMLCanvasElement): Compositor | null {
     return null;
   }
 
-  const width = projectState.width;
-  const height = projectState.height;
+  const width = currentDoc().sequence.width;
+  const height = currentDoc().sequence.height;
 
   // Enable blending
   gl.enable(gl.BLEND);
@@ -192,14 +183,25 @@ export function resizeCompositor(
 }
 
 /**
- * Render a single frame at the given time.
- * Composites all visible video tracks from bottom to top.
+ * Renders one frame of the timeline, bottom track to top.
+ *
+ * **Synchronous.** Frames come from the media engine's cache and are never
+ * awaited, so a render can neither overlap another nor stall the loop. The
+ * previous version awaited a `<video>` seek in the middle of the pass while
+ * the caller scheduled the next rAF without waiting — several renders ran at
+ * once, stomping the shared source texture and ping-pong buffers.
+ *
+ * A frame that is not yet decoded is skipped for this pass rather than waited
+ * for; the engine has been asked for it and the next pass will have it.
  */
-export async function renderFrame(comp: Compositor, time: number): Promise<void> {
+export function renderFrame(comp: Compositor, frame: number): void {
   if (comp.disposed) return;
   const { gl, width, height } = comp;
 
-  comp.pipeline.time = time;
+  const document_ = currentDoc();
+  const rate = document_.sequence.frameRate;
+  const timeSec = framesToSeconds(frame, rate);
+  comp.pipeline.time = timeSec;
 
   // Clear composite buffer to black
   gl.bindFramebuffer(gl.FRAMEBUFFER, comp.compositeBuffer.fbo);
@@ -207,67 +209,97 @@ export async function renderFrame(comp: Compositor, time: number): Promise<void>
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  // Get video tracks in bottom-to-top order (last track = bottom layer)
-  const videoTracks = projectState.tracks
-    .filter((t) => t.type === "video" && !t.muted)
+  // Bottom-to-top: the last track in the document is the bottom layer.
+  const videoTracks = document_.tracks
+    .filter((t) => t.kind === "video" && !t.muted)
     .reverse();
 
   for (const track of videoTracks) {
-    const clip = getActiveClip(track, time);
-    if (!clip) continue;
+    const clip = getActiveClip(track, frame);
+    if (!clip?.enabled) continue;
 
-    const mediaEntry = mediaState.entries.find((e) => e.id === clip.mediaId);
-    if (!mediaEntry) continue;
+    const borrowed = mediaEngine.tryGet(document_, clip, frame);
+    if (!borrowed) continue;
 
-    // Get frame source
-    const source = getCachedFrameSource(clip.mediaId);
-    if (!source) {
-      // Try to load it (async, will be available next frame)
-      getFrameSource(mediaEntry).catch(() => {});
-      continue;
+    try {
+      uploadTexture(gl, comp.sourceTexture, borrowed.sample.toCanvasImageSource());
+      renderFittedLayer(
+        comp,
+        borrowed.sample.displayWidth,
+        borrowed.sample.displayHeight,
+      );
+    } finally {
+      // Released in a finally so a GL error cannot pin the frame in the cache.
+      borrowed.release();
     }
 
-    // Calculate media time (accounting for in-point)
-    const mediaTime = clip.inPoint + (time - clip.startTime);
-
-    // Upload frame to texture
-    await uploadFrameToTexture(comp, source, mediaTime);
-
-    // Render source fitted to output resolution
-    renderFittedLayer(comp, source);
-
-    // Apply effects from clip data (with keyframe interpolation)
-    const clipRelativeTime = time - clip.startTime;
-    const effectInstances: EffectInstance[] = clip.effects.map((fx) => {
-      const def = EFFECT_DEFINITIONS.find((d) => d.id === fx.definitionId);
-      const values: Record<string, number | number[]> = { ...fx.values };
-      // Override with keyframe-interpolated values
-      if (def) {
-        for (const u of def.uniforms) {
-          if (u.type === "float" && fx.keyframes?.[u.name]?.length > 0) {
-            values[u.name] = getEffectValueAtTime(
-              fx,
-              u.name,
-              clipRelativeTime,
-              (values[u.name] as number) ?? (u.default as number),
-            );
+    const clipRelativeSec = framesToSeconds(frame - clip.startFrame, rate);
+    const effectInstances: EffectInstance[] = clip.effects
+      .filter((fx) => fx.enabled)
+      .map((fx) => {
+        const def = EFFECT_DEFINITIONS.find((d) => d.id === fx.definitionId);
+        const values: Record<string, number | number[]> = {};
+        for (const [name, param] of Object.entries(fx.params)) {
+          values[name] = param.value;
+        }
+        if (def) {
+          for (const u of def.uniforms) {
+            const param = fx.params[u.name];
+            if (u.type === "float" && param?.keys?.length) {
+              values[u.name] = getEffectValueAtTime(
+                {
+                  id: fx.id,
+                  definitionId: fx.definitionId,
+                  values,
+                  keyframes: {
+                    [u.name]: param.keys.map((k) => ({
+                      id: k.id,
+                      time: framesToSeconds(k.timeFrames, rate),
+                      value: typeof k.value === "number" ? k.value : 0,
+                      easing: k.interp === "hold" ? "hold" : "linear",
+                    })),
+                  },
+                },
+                u.name,
+                clipRelativeSec,
+                (values[u.name] as number) ?? (u.default as number),
+              );
+            }
           }
         }
-      }
-      return { definitionId: fx.definitionId, values };
-    });
-    let layerTexture = comp.layerBuffer.texture;
+        return { definitionId: fx.definitionId, values };
+      });
 
+    let layerTexture = comp.layerBuffer.texture;
     if (effectInstances.length > 0) {
       layerTexture = applyEffects(comp.pipeline, layerTexture, effectInstances);
     }
 
-    // Composite this layer onto the output
     compositeLayer(comp, layerTexture, 1.0);
   }
 
-  // Blit composite to screen
   blitToScreen(comp);
+}
+
+/**
+ * Ensures the frames for the coming half-second are decoded, and drops
+ * decoders for clips no longer near the playhead.
+ */
+export function primeFrames(frame: number): void {
+  const document_ = currentDoc();
+  const active: DocClip[] = [];
+  for (const track of document_.tracks) {
+    if (track.kind !== "video") continue;
+    const clip = clipAt(track, frame);
+    if (clip) active.push(clip);
+  }
+  mediaEngine.prefetch(document_, active, frame);
+  mediaEngine.retain(active.map((c) => c.id));
+}
+
+/** Renders at a time in seconds. Convenience for callers still thinking in seconds. */
+export function renderAtSeconds(comp: Compositor, seconds: number): void {
+  renderFrame(comp, secondsToFrames(seconds, currentDoc().sequence.frameRate));
 }
 
 /**
@@ -309,36 +341,18 @@ export function disposeCompositor(comp: Compositor): void {
 
 // ── Internal helpers ────────────────────────────────────────────────
 
-function getActiveClip(track: Track, time: number): Clip | null {
-  for (const clip of track.clips) {
-    if (time >= clip.startTime && time < clip.startTime + clip.duration) {
-      return clip;
-    }
-  }
-  return null;
+function getActiveClip(track: DocTrack, frame: number): DocClip | undefined {
+  // Clips are kept sorted and non-overlapping by the edit operations, so this
+  // is unambiguous. It used to be a first-match scan over an unsorted array,
+  // which meant render order depended on edit history.
+  return clipAt(track, frame);
 }
 
-async function uploadFrameToTexture(
+function renderFittedLayer(
   comp: Compositor,
-  source: FrameSource,
-  mediaTime: number,
-): Promise<void> {
-  const { gl, sourceTexture } = comp;
-
-  if (source.type === "video" && source.element) {
-    const video = source.element as HTMLVideoElement;
-    // Seek if needed
-    await seekFrameSource(source, mediaTime);
-    uploadTexture(gl, sourceTexture, video);
-  } else if (source.type === "image" && source.element) {
-    uploadTexture(gl, sourceTexture, source.element);
-  } else {
-    // Black frame
-    uploadSolidColor(gl, sourceTexture, 0, 0, 0);
-  }
-}
-
-function renderFittedLayer(comp: Compositor, source: FrameSource): void {
+  sourceWidth: number,
+  sourceHeight: number,
+): void {
   const { gl, fitProgram, quad, sourceTexture, layerBuffer, width, height } = comp;
 
   gl.bindFramebuffer(gl.FRAMEBUFFER, layerBuffer.fbo);
@@ -353,8 +367,8 @@ function renderFittedLayer(comp: Compositor, source: FrameSource): void {
   gl.uniform1i(gl.getUniformLocation(fitProgram, "u_texture"), 0);
   gl.uniform2f(
     gl.getUniformLocation(fitProgram, "u_srcSize"),
-    source.width,
-    source.height,
+    sourceWidth,
+    sourceHeight,
   );
   gl.uniform2f(gl.getUniformLocation(fitProgram, "u_dstSize"), width, height);
 

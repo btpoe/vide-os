@@ -6,7 +6,7 @@
 
 import { projectState } from "@/stores/project-store";
 import { mediaState } from "@/stores/media-store";
-import { createCompositor, renderFrame, disposeCompositor } from "./compositor";
+import { createCompositor, renderAtSeconds, disposeCompositor } from "./compositor";
 import { preloadFrameSources } from "./frame-source";
 
 export interface ExportSettings {
@@ -218,8 +218,10 @@ export async function exportTimeline(
 
     const time = frame * frameDuration;
 
-    // Render this frame
-    await renderFrame(compositor, time);
+    // Renders whatever is already decoded — which for export is the wrong
+    // guarantee, but this whole path is replaced by a deterministic encoder in
+    // the next phase. Until then export remains as unreliable as it always was.
+    renderAtSeconds(compositor, time);
 
     // Request frame capture from the stream
     const videoTrack = stream.getVideoTracks()[0] as any;

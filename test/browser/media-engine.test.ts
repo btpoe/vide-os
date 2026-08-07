@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { MediaEngine } from "@/media/engine";
-import { leakCount, resetLeakCounters } from "@/media/frame-cache";
+import { openFrameCount, resetLeakCounters } from "@/media/frame-cache";
 import { forgetAllAssets } from "@/media/asset-registry";
 import { openInput, probeMedia } from "@/media/probe";
 import { createBlobSource } from "@/media/source";
@@ -245,10 +245,10 @@ describe("resource discipline", () => {
       const borrowed = await engine.getExact(doc, clip, frame);
       borrowed?.release();
     }
-    expect(leakCount()).toBeGreaterThan(0); // frames are held by the cache
+    expect(openFrameCount()).toBeGreaterThan(0); // frames are held by the cache
 
     engine.dispose();
-    expect(leakCount()).toBe(0);
+    expect(openFrameCount()).toBe(0);
   });
 
   it("evicts decoders beyond the budget", async () => {
@@ -265,7 +265,7 @@ describe("resource discipline", () => {
 
     expect(engine.stats().decoders).toBeLessThanOrEqual(2);
     engine.dispose();
-    expect(leakCount()).toBe(0);
+    expect(openFrameCount()).toBe(0);
   });
 
   it("retain drops decoders for clips no longer near the playhead", async () => {
@@ -286,7 +286,7 @@ describe("resource discipline", () => {
     expect(engine.stats().decoders).toBe(1);
 
     engine.dispose();
-    expect(leakCount()).toBe(0);
+    expect(openFrameCount()).toBe(0);
   });
 
   it("keeps the frame cache under its byte budget", async () => {
