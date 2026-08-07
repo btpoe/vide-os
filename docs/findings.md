@@ -209,6 +209,50 @@ the call sites that bypass it. `verifyFilePermission` now only queries;
 
 ---
 
+## Phase 2 — timeline geometry
+
+### Found
+
+**2.1 — `trimClipStart` overran the source at fractional speeds.** The fourth
+member of the rounding family (1.1, 1.2, 1.3). Advancing the in-point by
+`round(delta × speed)` rounds independently of the shrinking span: trimming 21
+timeline frames off a 0.5× clip advanced the in-point by `round(10.5) = 11`
+while the span shrank by only 10, gaining a frame. `clearRange`'s head-trim
+path had the identical shape.
+
+Fixed by reusing the split anchoring — but that exposed a second bug in the
+anchor helper itself. `tailInPoint` clamped the result at _no lower than the
+parent's in-point_, which is correct for a split (the tail is always shorter)
+but wrong for a trim: dragging the left edge outward reveals earlier material,
+so the in-point must be free to move down. Pinned there while the span grew, it
+was itself an overrun. Renamed `anchoredInPoint` and clamped only at zero.
+
+Lesson worth keeping: three of these four were found by the same property
+("every clip stays inside its source"), each at a different seed. A single run
+of 300 sequences was not enough to surface them — 2.1 only appeared once
+Phase 2's tests changed the seed. The suite now runs a 20,000-sequence sweep
+before each commit that touches `edits.ts`.
+
+### Decided
+
+**2.2 — geometry is frame-first, zoom limits are per-second.** `TimelineView`
+holds `pxPerFrame`, because the document counts in frames and a frame is the
+smallest position a clip edge can take. But the zoom limits are expressed in
+pixels _per second_, so 24fps and 60fps material zoom to the same visible
+duration rather than the same pixels-per-frame.
+
+**2.3 — snapping threshold is in pixels, not frames.** Snapping engages when
+the target is visually close, so it feels identical at every zoom. A
+frame-based threshold would be unusably sticky zoomed out and useless zoomed in.
+
+**2.4 — the anchor invariant yields at frame zero.** Cursor-anchored zoom keeps
+the frame under the pointer fixed, except when holding it would require
+scrolling past the start of the timeline. There is nothing before frame zero to
+show, so the view pins to the left edge instead. Asserted explicitly rather
+than left as an unexplained gap in the property test.
+
+---
+
 ## Open items not yet scheduled
 
 - **Audio detection is unreliable.** `getVideoMetadata` sniffs `mozHasAudio` /

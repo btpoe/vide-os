@@ -65,20 +65,23 @@ function pruneTransitions(t: Track): void {
 }
 
 /**
- * In-point for the tail half of a cut, anchored so the tail's source range ends
- * exactly where the parent's did.
+ * In-point that keeps a clip's source range ending exactly where it did.
  *
- * The obvious formula — `parentIn + round(offset * speed)` — rounds each half's
- * source span independently. At a fractional speed both halves can round up and
- * together consume one more source frame than the parent did, pushing the tail
- * past the end of the media. Anchoring the tail's end instead makes that
- * impossible: the pair may overlap by a frame at the seam, which is invisible,
- * rather than overrunning the source, which is a freeze frame.
+ * Used whenever the left edge moves — splitting, trimming the head, clearing a
+ * range. The obvious formula, `oldIn + round(delta * speed)`, rounds the
+ * in-point shift independently of the resulting span; at a fractional speed the
+ * two round apart and the clip ends up reading one frame past the end of its
+ * media. Anchoring the source *end* makes `in + span` exactly conserved, so
+ * that cannot happen.
+ *
+ * Only clamped at zero. It must be free to move below the original in-point,
+ * because trimming the head leftward reveals earlier material — pinning it
+ * there while the span grew was itself an overrun.
  */
-function tailInPoint(parent: Clip, tailDurationFrames: number): number {
+function anchoredInPoint(parent: Clip, newDurationFrames: number): number {
   const parentSpan = clipSourceSpan(parent);
-  const tailSpan = Math.round(tailDurationFrames * parent.speed);
-  return Math.max(parent.inPointFrames, parent.inPointFrames + parentSpan - tailSpan);
+  const newSpan = Math.round(newDurationFrames * parent.speed);
+  return Math.max(0, parent.inPointFrames + parentSpan - newSpan);
 }
 
 /**
@@ -161,7 +164,7 @@ function clearRange(
     if (clipStart < start && clipEnd > end) {
       const tail = cloneClip(clip, newId("clip"));
       tail.durationFrames = clipEnd - end;
-      tail.inPointFrames = tailInPoint(clip, tail.durationFrames);
+      tail.inPointFrames = anchoredInPoint(clip, tail.durationFrames);
       tail.startFrame = end;
       clampFades(tail);
 
@@ -180,11 +183,12 @@ function clearRange(
       continue;
     }
 
-    // Overlaps the tail of the range — trim its head forward.
-    const shift = end - clipStart;
-    clip.inPointFrames += Math.round(shift * clip.speed);
+    // Overlaps the tail of the range — trim its head forward. Same anchoring
+    // as trimClipStart: the surviving part keeps the parent's source end.
+    const remaining = clipEnd - end;
+    clip.inPointFrames = anchoredInPoint(clip, remaining);
     clip.startFrame = end;
-    clip.durationFrames = clipEnd - end;
+    clip.durationFrames = remaining;
     clampFades(clip);
     kept.push(clip);
   }
@@ -439,7 +443,7 @@ export function splitClip(
   const right = cloneClip(clip, newId("clip"));
   right.startFrame = clip.startFrame + offset;
   right.durationFrames = clip.durationFrames - offset;
-  right.inPointFrames = tailInPoint(clip, right.durationFrames);
+  right.inPointFrames = anchoredInPoint(clip, right.durationFrames);
   right.fadeInFrames = 0;
 
   clip.durationFrames = offset;
@@ -481,10 +485,15 @@ export function trimClipStart(
   // Must leave a clip behind.
   target = Math.min(target, end - MIN_CLIP_FRAMES);
 
-  const delta = target - clip.startFrame;
+  // Trimming the left edge must not move the right edge's source frame.
+  // Advancing the in-point by `round(delta * speed)` rounds independently of
+  // the shrinking span, so at a fractional speed the two can round apart and
+  // the clip ends up reading one frame past the end of its media.
+  const remaining = end - target;
+  clip.inPointFrames = anchoredInPoint(clip, remaining);
   clip.startFrame = target;
-  clip.durationFrames = end - target;
-  clip.inPointFrames = Math.max(0, clip.inPointFrames + Math.round(delta * clip.speed));
+  clip.durationFrames = remaining;
+  fitToSource(doc, clip);
   clampFades(clip);
 }
 
