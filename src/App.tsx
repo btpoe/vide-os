@@ -48,6 +48,7 @@ import ToolsPanel from "./panels/ToolsPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import PropertiesPanel from "./panels/PropertiesPanel";
 import HistoryPanel from "./panels/HistoryPanel";
+import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
 
 // Helper: mount a SolidJS component into a <ve-panel> web component
@@ -125,6 +126,14 @@ const builtInPanels: PanelDefinition[] = [
     category: "utility",
     component: () => createPanelElement("Properties", PropertiesPanel),
     defaultPosition: { area: "right", order: 2 },
+  },
+  {
+    id: "mixer",
+    name: "Mixer",
+    icon: "🎚",
+    category: "utility",
+    component: () => createPanelElement("Mixer", MixerPanel),
+    defaultPosition: { area: "right", order: 3 },
   },
   {
     id: "history",

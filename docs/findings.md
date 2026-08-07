@@ -332,6 +332,29 @@ the Y-flip accounting is the known defect the render graph rewrite settles
 canonically, and pinning an orientation here would just encode today's
 accident. Once it is fixed the test tightens to one orientation.
 
+### Phase 3c
+
+**3.7 — AAC decodes longer than it encodes.** A two-second fixture comes back
+as ~2.07s of audio: AAC carries encoder priming and pads to a frame boundary.
+Harmless here, because the offline render places clips by timeline position and
+sizes the output from the timeline, so the overhang is never used — but it is
+the kind of thing that silently becomes an A/V sync bug if a later encoder ever
+derives duration from the decoded buffer instead.
+
+**3.8 — one graph, two contexts.** `buildVoice` takes the context as a
+parameter so live preview (`AudioContext`) and export (`OfflineAudioContext`)
+run the same code. The old export had a completely separate mixdown path, and
+then played it into a MediaRecorder in real time while video rendered at render
+speed — it could not line up even in principle. Sharing the function is what
+makes "what you hear is what you get" structural rather than aspirational.
+
+**3.9 — no per-frame audio sync step, deliberately.** Every gain ramp and voice
+start is scheduled at an absolute `AudioContext` time. There is nothing
+anywhere that compares audio position to video position and corrects it,
+because there is nothing to correct: a ramp scheduled at a time happens at that
+time. The old code had drift correction at a 0.15s threshold precisely because
+it had two clocks.
+
 ---
 
 ## Open items not yet scheduled

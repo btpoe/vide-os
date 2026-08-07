@@ -8,7 +8,9 @@
 
 import { createSignal, createEffect } from "solid-js";
 import { TimelineClock } from "./clock";
+import { AudioEngine } from "@/audio/engine";
 import {
+  doc,
   playheadFrame,
   setPlayheadFrame,
   setPlayingMirror,
@@ -34,6 +36,7 @@ export function getAudioContext(): AudioContext | null {
  */
 export async function ensureAudioContext(): Promise<AudioContext> {
   audioContext ??= new AudioContext({ latencyHint: "interactive" });
+  audioEngine ??= new AudioEngine(audioContext);
   if (audioContext.state === "suspended") await audioContext.resume();
   return audioContext;
 }
@@ -46,10 +49,31 @@ export const clock = new TimelineClock({
 const [isPlaying, setIsPlayingSignal] = createSignal(false);
 export { isPlaying };
 
+let audioEngine: AudioEngine | null = null;
+
+/** The live audio graph. Null until the first user gesture creates a context. */
+export function getAudioEngine(): AudioEngine | null {
+  return audioEngine;
+}
+
+/**
+ * Starts or restarts the audio for the current position and rate.
+ *
+ * Called whenever playback begins or the transport jumps: voices are scheduled
+ * against an origin fixed at that moment, so a seek needs them rebuilt.
+ */
+function restartAudio(): void {
+  if (!audioEngine) return;
+  if (clock.isPlaying())
+    audioEngine.start(doc(), clock.nowFrame(), clock.playbackRate());
+  else audioEngine.stop();
+}
+
 /** Mirrors the clock's state into a signal so the UI can react to it. */
 function syncPlayingState(): void {
   setIsPlayingSignal(clock.isPlaying());
   setPlayingMirror(clock.isPlaying());
+  restartAudio();
 }
 
 export function togglePlayback(): void {
@@ -76,6 +100,9 @@ export function pause(): void {
 export function seekToFrame(frame: number): void {
   clock.seekFrame(frame);
   setPlayheadFrame(clock.nowFrame());
+  // Voices are scheduled against an origin fixed when playback began, so a
+  // seek has to rebuild them rather than nudge them.
+  restartAudio();
 }
 
 export function stepFrames(delta: number): void {
@@ -102,5 +129,12 @@ export function initTransport(): void {
     if (!clock.isPlaying() && clock.nowFrame() !== frame) {
       clock.seekFrame(frame);
     }
+  });
+
+  // Keep the mix following edits: mute, solo and clip changes take effect
+  // without needing playback restarted.
+  createEffect(() => {
+    const current = doc();
+    audioEngine?.update(current);
   });
 }

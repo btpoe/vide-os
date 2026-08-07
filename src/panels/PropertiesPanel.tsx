@@ -12,6 +12,11 @@ import {
   removeAllKeyframes,
   getEffectValueAtTime,
   setPlayhead,
+  clipAudioSettings,
+  setClipVolume,
+  setClipPan,
+  setClipFade,
+  setClipLinkedAudio,
   type Keyframe,
   type KeyframeEasing,
 } from "@/stores/project-store";
@@ -36,6 +41,42 @@ const PropertiesPanel: Component = () => {
     <div class="flex items-center gap-2">
       <label class="text-xs text-muted-foreground w-16 shrink-0">{props.label}</label>
       <span class="text-xs text-foreground truncate">{props.value}</span>
+    </div>
+  );
+
+  /** Live audio settings for the selected clip, in display units. */
+  const audio = createMemo(() => {
+    const selected = selectedClipInfo();
+    if (!selected) return null;
+    if (selected.track.type !== "video" && selected.track.type !== "audio") return null;
+    return clipAudioSettings(selected.track.id, selected.clip.id);
+  });
+
+  const Slider: Component<{
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    format: (value: number) => string;
+    onInput: (value: number) => void;
+  }> = (props) => (
+    <div class="flex items-center gap-2">
+      <label class="text-[10px] text-muted-foreground w-14 shrink-0">
+        {props.label}
+      </label>
+      <input
+        type="range"
+        min={props.min}
+        max={props.max}
+        step={props.step}
+        value={props.value}
+        onInput={(e) => props.onInput(parseFloat(e.currentTarget.value))}
+        class="flex-1 h-1 accent-primary cursor-pointer"
+      />
+      <span class="text-[10px] text-muted-foreground w-14 text-right font-mono tabular-nums">
+        {props.format(props.value)}
+      </span>
     </div>
   );
 
@@ -252,11 +293,78 @@ const PropertiesPanel: Component = () => {
               note="Position, scale, rotation and opacity are not wired to the renderer yet."
             />
 
-            <Show when={info().track.type === "video" || info().track.type === "audio"}>
-              <Unbuilt
-                title="Audio"
-                note="Per-clip volume, pan and fades are not wired to the audio engine yet."
-              />
+            <Show when={audio()}>
+              {(settings) => (
+                <div>
+                  <div class="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-2">
+                    Audio
+                  </div>
+                  <div class="space-y-2">
+                    <Slider
+                      label="Volume"
+                      value={settings().volume}
+                      min={0}
+                      max={2}
+                      step={0.01}
+                      format={(v) =>
+                        v <= 0 ? "−∞ dB" : `${(20 * Math.log10(v)).toFixed(1)} dB`
+                      }
+                      onInput={(v) => setClipVolume(info().track.id, info().clip.id, v)}
+                    />
+                    <Slider
+                      label="Pan"
+                      value={settings().pan}
+                      min={-1}
+                      max={1}
+                      step={0.01}
+                      format={(v) =>
+                        Math.abs(v) < 0.005
+                          ? "C"
+                          : `${v < 0 ? "L" : "R"}${Math.round(Math.abs(v) * 100)}`
+                      }
+                      onInput={(v) => setClipPan(info().track.id, info().clip.id, v)}
+                    />
+                    <Slider
+                      label="Fade In"
+                      value={settings().fadeInSec}
+                      min={0}
+                      max={Math.max(0.1, settings().maxFadeSec)}
+                      step={0.05}
+                      format={(v) => `${v.toFixed(2)}s`}
+                      onInput={(v) =>
+                        setClipFade(info().track.id, info().clip.id, "in", v)
+                      }
+                    />
+                    <Slider
+                      label="Fade Out"
+                      value={settings().fadeOutSec}
+                      min={0}
+                      max={Math.max(0.1, settings().maxFadeSec)}
+                      step={0.05}
+                      format={(v) => `${v.toFixed(2)}s`}
+                      onInput={(v) =>
+                        setClipFade(info().track.id, info().clip.id, "out", v)
+                      }
+                    />
+                    <Show when={info().track.type === "video"}>
+                      <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={settings().linkedAudio}
+                          onChange={(e) =>
+                            setClipLinkedAudio(
+                              info().track.id,
+                              info().clip.id,
+                              e.currentTarget.checked,
+                            )
+                          }
+                        />
+                        Include this clip&rsquo;s audio
+                      </label>
+                    </Show>
+                  </div>
+                </div>
+              )}
             </Show>
 
             {/* Transition */}

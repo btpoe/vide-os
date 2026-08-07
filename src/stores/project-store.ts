@@ -900,6 +900,90 @@ export function removeClipTransition(trackId: string, clipId: string): void {
   );
 }
 
+// ── Per-clip audio ────────────────────────────────────────────────────
+
+/** Volume as a linear gain, 0..2. Coalesced so a slider drag is one undo step. */
+export function setClipVolume(trackId: string, clipId: string, value: number): void {
+  applyEdit(
+    "Set volume",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (clip)
+        clip.volume = { ...clip.volume, value: Math.max(0, Math.min(2, value)) };
+    },
+    { icon: "🔊", coalesceKey: `volume:${clipId}` },
+  );
+}
+
+/** Pan from -1 (left) to +1 (right). */
+export function setClipPan(trackId: string, clipId: string, value: number): void {
+  applyEdit(
+    "Set pan",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (clip) clip.pan = { ...clip.pan, value: Math.max(-1, Math.min(1, value)) };
+    },
+    { icon: "🎚", coalesceKey: `pan:${clipId}` },
+  );
+}
+
+export function setClipFade(
+  trackId: string,
+  clipId: string,
+  side: "in" | "out",
+  seconds: number,
+): void {
+  applyEdit(
+    side === "in" ? "Set fade in" : "Set fade out",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (!clip) return;
+      const frames = Math.max(0, Math.min(clip.durationFrames, toFrames(seconds)));
+      if (side === "in") clip.fadeInFrames = frames;
+      else clip.fadeOutFrames = frames;
+      // Fades must not overlap; the later one yields.
+      if (clip.fadeInFrames + clip.fadeOutFrames > clip.durationFrames) {
+        if (side === "in") clip.fadeOutFrames = clip.durationFrames - clip.fadeInFrames;
+        else clip.fadeInFrames = clip.durationFrames - clip.fadeOutFrames;
+      }
+    },
+    { icon: "🎚", coalesceKey: `fade${side}:${clipId}` },
+  );
+}
+
+/** Whether a video clip contributes its own audio to the mix. */
+export function setClipLinkedAudio(
+  trackId: string,
+  clipId: string,
+  linked: boolean,
+): void {
+  applyEdit(
+    linked ? "Attach audio" : "Detach audio",
+    (d) => {
+      const clip = withClip(d, trackId, clipId);
+      if (clip) clip.linkedAudio = linked;
+    },
+    { icon: "🔗" },
+  );
+}
+
+/** Per-clip audio settings, in the units the Properties panel shows. */
+export function clipAudioSettings(trackId: string, clipId: string) {
+  const clip = doc()
+    .tracks.find((t) => t.id === trackId)
+    ?.clips.find((c) => c.id === clipId);
+  if (!clip) return null;
+  const r = rate();
+  return {
+    volume: clip.volume.value,
+    pan: clip.pan.value,
+    fadeInSec: framesToSeconds(clip.fadeInFrames, r),
+    fadeOutSec: framesToSeconds(clip.fadeOutFrames, r),
+    linkedAudio: clip.linkedAudio,
+    maxFadeSec: framesToSeconds(clip.durationFrames, r),
+  };
+}
+
 // ── Titles ────────────────────────────────────────────────────────────
 
 const DEFAULT_TEXT_STYLE: TextStyle = {
