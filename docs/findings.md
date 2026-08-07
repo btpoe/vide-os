@@ -282,6 +282,44 @@ Neither was a defect in the app. Both were initially diagnosed as one.
 
 ---
 
+## Phase 3 — media engine
+
+### Found
+
+**3.1 — the frame-counter fixture could not survive its own codec.** The first
+version of the test fixture encoded each frame's number in its fill colour and
+read the RGB back. H.264 is lossy and 4:2:0, so exact channel values do not
+survive a round trip — frame 3 decoded as 514. Six frame-accuracy tests failed
+for that reason alone, none of them because the engine was wrong.
+
+Replaced with a row of black and white blocks encoding the number in binary,
+read by thresholding luma. Maximum contrast is precisely what a video codec
+preserves best. Worth remembering generally: a fixture has to be robust to the
+transformation under test, or it tests the fixture.
+
+### Decided
+
+**3.2 — decode per clip instance, demux per file.** Parsing a container and
+building its sync-sample index is worth doing once per file; decoding is not
+shareable, because two clips of one source sit at different timestamps. The old
+code shared a single `<video>` element per file, so a split clip's two halves
+fought over `currentTime` and the last seek won. Registry and decoder pool are
+therefore keyed differently — by content key and by clip id respectively.
+
+**3.3 — three ways to ask for a frame.** `getExact` waits and is the only one
+that can be deterministic, so export uses it. `tryGet` never waits, which is
+what lets the preview loop render at a steady rate and repeat a frame when the
+decoder is behind — the old loop awaited mid-render, which is why concurrent
+renders overlapped and corrupted shared GL state. A nearest-frame fallback
+serves scrubbing, and reports `exact: false` so callers can tell.
+
+**3.4 — frame leaks are counted, not hoped about.** `VideoFrame` holds memory
+the garbage collector will not reclaim, and exhausting decoders fails silently
+mid-edit. Every frame is refcounted and the create-minus-close tally is
+asserted to be zero at the end of each browser test.
+
+---
+
 ## Open items not yet scheduled
 
 - **Audio detection is unreliable.** `getVideoMetadata` sniffs `mozHasAudio` /
