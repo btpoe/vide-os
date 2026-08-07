@@ -27,7 +27,7 @@ Specifically, as of now:
 | Transitions                                 | Data model and UI exist; the renderer never draws them                                                                                                                                           |
 | Titles / text clips                         | Data model and editor exist; the compositor has no text path                                                                                                                                     |
 | Transform / opacity / crop                  | Modelled but not rendered                                                                                                                                                                        |
-| Media persistence                           | File handles are no longer destroyed by a failed permission check, but there is still no relink UI, so moved media stays offline                                                                 |
+| Media persistence                           | Works. Handles survive a lapsed permission; a banner offers a one-click re-grant, and moved media relinks by file or folder, verified by content hash.                                           |
 
 Nothing in the UI claims to do something it doesn't: unimplemented controls are
 disabled or labelled, not silently inert.

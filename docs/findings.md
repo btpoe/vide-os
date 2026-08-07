@@ -332,6 +332,22 @@ the Y-flip accounting is the known defect the render graph rewrite settles
 canonically, and pinning an orientation here would just encode today's
 accident. Once it is fixed the test tightens to one orientation.
 
+### Phase 3d
+
+**3.10 — `MediaEntry.handle` was about to become a lie.** Relinking adopts a
+file through the platform layer, which yields a `FileRef` rather than a
+`FileSystemFileHandle` — and the first draft filled the field with
+`undefined as unknown as FileSystemFileHandle`. That typechecks and crashes on
+the first thumbnail. The entry now carries whichever it has and exposes
+`entryFile()`; nothing reads `handle` directly.
+
+**3.11 — relink is verified by content, not by name.** Candidates in a folder
+are narrowed by name and size because hashing every file would read the whole
+folder, but the content key is what decides. Pointing at a different recording
+that happens to share a filename is reported rather than silently accepted —
+which matters because the failure would otherwise appear much later as the
+wrong footage in an export.
+
 ### Phase 3c
 
 **3.7 — AAC decodes longer than it encodes.** A two-second fixture comes back
@@ -359,12 +375,12 @@ it had two clocks.
 
 ## Open items not yet scheduled
 
-- **Audio detection is unreliable.** `getVideoMetadata` sniffs `mozHasAudio` /
-  `webkitAudioDecodedByteCount` / `audioTracks`, none of which are dependable —
-  a file with a real AAC track probes as `hasAudio: false` in headless Chromium.
-  Real per-track probing lands with the media engine in Phase 3.
+- **`getVideoMetadata` is still the old `<video>`-based sniffer.** The media
+  engine's `probeMedia` reports codecs and decodability properly, but the media
+  pool's import path has not been switched over to it, so `hasAudio` there is
+  still guessed from `mozHasAudio` / `webkitAudioDecodedByteCount`. Harmless
+  today because the audio engine asks the engine directly, but two sources of
+  truth about the same file.
 - **Menu hover-then-click toggles the menu shut.** Hovering across the menu bar
   while a menu is open switches to the hovered menu; the subsequent click then
   toggles it closed. Cosmetic, pre-existing.
-- **No relink UI.** Handles are no longer destroyed, and `reconnectPendingMedia`
-  exists, but nothing calls it yet. Phase 3.

@@ -5,7 +5,7 @@
  */
 
 import { projectState } from "@/stores/project-store";
-import { mediaState } from "@/stores/media-store";
+import { entryFile, mediaState } from "@/stores/media-store";
 import { createCompositor, renderAtSeconds, disposeCompositor } from "./compositor";
 import { preloadFrameSources } from "./frame-source";
 
@@ -351,7 +351,8 @@ async function mixTimelineAudio(
     if (!entry) continue;
 
     try {
-      const file = await entry.handle.getFile();
+      const file = await entryFile(entry);
+      if (!file) continue;
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await offlineCtx.decodeAudioData(arrayBuffer.slice(0));
 

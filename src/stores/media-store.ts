@@ -15,6 +15,7 @@ import {
   requestFilePermission,
 } from "@/lib/fs-access";
 import { computeContentKey } from "@/model/ids";
+import { platform, type FileRef } from "@/platform";
 import { registerAsset } from "@/stores/project-store";
 import type { Asset, AssetKind } from "@/model/doc";
 
@@ -23,7 +24,15 @@ export interface MediaEntry {
   name: string;
   type: MediaType;
   size: number;
-  handle: FileSystemFileHandle;
+  /**
+   * How this entry's bytes are reached.
+   *
+   * A file imported through the File Browser has a handle; one adopted by
+   * relinking has only a platform reference. Exactly one is set — use
+   * `entryFile` rather than reading either directly.
+   */
+  handle?: FileSystemFileHandle;
+  ref?: FileRef;
   thumbnailUrl?: string;
   duration?: number;
   width?: number;
@@ -83,6 +92,18 @@ function syncAssetToDocument(entry: MediaEntry): void {
   }
 
   registerAsset(asset);
+}
+
+/**
+ * Reads an entry's file, whichever way it was obtained.
+ *
+ * Callers must not reach for `handle` themselves: a relinked entry does not
+ * have one, and pretending otherwise crashes at the first thumbnail.
+ */
+export async function entryFile(entry: MediaEntry): Promise<File | Blob | null> {
+  if (entry.handle) return getFileFromHandle(entry.handle);
+  if (entry.ref) return platform.fs.readBlob(entry.ref);
+  return null;
 }
 
 export function addMediaEntry(entry: MediaEntry): void {

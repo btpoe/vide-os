@@ -14,8 +14,7 @@
 import { createSignal } from "solid-js";
 import { getCachedWaveform, getWaveform } from "./waveform";
 import { getCachedThumbnail, getClipThumbnail } from "./clip-thumbnails";
-import { getFileFromHandle } from "./fs-access";
-import { mediaState } from "@/stores/media-store";
+import { entryFile, mediaState } from "@/stores/media-store";
 
 /** Bumped whenever a decoration finishes, so views can re-read the caches. */
 const [previewVersion, bumpVersion] = createSignal(0);
@@ -63,8 +62,9 @@ export function requestWaveform(mediaId: string): void {
   if (!entry) return;
 
   enqueue(`waveform:${mediaId}`, async () => {
-    const file = await getFileFromHandle(entry.handle);
-    await getWaveform(mediaId, file);
+    const file = await entryFile(entry);
+    if (!file) return;
+    await getWaveform(mediaId, file as File);
     bumpVersion((v) => v + 1);
   });
 }
@@ -75,8 +75,9 @@ export function requestThumbnail(mediaId: string): void {
   if (!entry) return;
 
   enqueue(`thumb:${mediaId}`, async () => {
-    const file = await getFileFromHandle(entry.handle);
-    await getClipThumbnail(mediaId, file);
+    const file = await entryFile(entry);
+    if (!file) return;
+    await getClipThumbnail(mediaId, file as File);
     bumpVersion((v) => v + 1);
   });
 }

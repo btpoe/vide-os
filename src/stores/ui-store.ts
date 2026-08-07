@@ -76,7 +76,15 @@ export function getDefaultLayout(): LayoutNode {
               { type: "panel", id: "properties-tab", panelId: "properties" },
             ],
           },
-          { type: "panel", id: "right-bottom", panelId: "history" },
+          {
+            type: "tabs",
+            id: "right-bottom",
+            activeTab: 0,
+            children: [
+              { type: "panel", id: "mixer-tab", panelId: "mixer" },
+              { type: "panel", id: "history-tab", panelId: "history" },
+            ],
+          },
         ],
       },
     ],

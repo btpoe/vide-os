@@ -132,6 +132,7 @@ export function createColorSource(): FrameSource {
 // ── Internal ────────────────────────────────────────────────────────
 
 async function loadFrameSource(entry: MediaEntry): Promise<FrameSource> {
+  if (!entry.handle) throw new Error(`${entry.name} has no file handle`);
   const file = await getFileFromHandle(entry.handle);
   const objectUrl = URL.createObjectURL(file);
   const mediaType = entry.type;

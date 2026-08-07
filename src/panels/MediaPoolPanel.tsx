@@ -8,6 +8,7 @@ import {
 } from "@/stores/media-store";
 import { formatFileSize, formatDuration } from "@/lib/fs-access";
 import { takeDragFileHandle } from "@/lib/drag-payload";
+import { problemFor } from "@/stores/media-problems";
 
 const TYPE_ICONS: Record<string, string> = {
   video: "🎬",
@@ -66,6 +67,18 @@ const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (prop
         <span class="absolute top-0.5 left-0.5 px-1 py-px text-[8px] bg-black/50 text-white rounded uppercase">
           {props.entry.type}
         </span>
+        {/* A file the project cannot currently use says so here, rather than
+            being discovered later as a black clip. */}
+        <Show when={problemFor(props.entry.id)}>
+          {(problem) => (
+            <span
+              class="absolute top-0.5 right-0.5 px-1 py-px text-[8px] bg-amber-500 text-black rounded font-medium"
+              title={problem().detail}
+            >
+              {problem().kind === "undecodable" ? "UNSUPPORTED" : "OFFLINE"}
+            </span>
+          )}
+        </Show>
       </div>
       {/* Name */}
       <div class="px-1.5 py-1 bg-card">
@@ -128,7 +141,16 @@ const MediaListItem: Component<{ entry: MediaEntry; selected: boolean }> = (prop
         </Show>
       </div>
       <div class="flex-1 min-w-0">
-        <div class="text-[11px] truncate">{props.entry.name}</div>
+        <div class="text-[11px] truncate flex items-center gap-1">
+          <Show when={problemFor(props.entry.id)}>
+            {(problem) => (
+              <span class="text-amber-500 shrink-0" title={problem().detail}>
+                ⚠
+              </span>
+            )}
+          </Show>
+          {props.entry.name}
+        </div>
         <div class="text-[9px] text-muted-foreground flex gap-2">
           <span>{props.entry.type}</span>
           <span>{formatFileSize(props.entry.size)}</span>

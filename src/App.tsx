@@ -27,6 +27,7 @@ import {
 } from "./model/io";
 import { initTimelinePersistence } from "./stores/timeline-store";
 import { initTransport } from "./playback/transport";
+import { hasMediaProblems, mediaProblems } from "./stores/media-problems";
 import { restoreMedia } from "./stores/media-store";
 import { registerPanel, type PanelDefinition } from "./web-components/registry";
 import {
@@ -50,6 +51,7 @@ import PropertiesPanel from "./panels/PropertiesPanel";
 import HistoryPanel from "./panels/HistoryPanel";
 import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
+import RelinkDialog from "./panels/RelinkDialog";
 
 // Helper: mount a SolidJS component into a <ve-panel> web component
 function createPanelElement(title: string, SolidComponent: Component): HTMLElement {
@@ -152,6 +154,7 @@ const App: Component = () => {
   const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
   const [aboutOpen, setAboutOpen] = createSignal(false);
   const [openWarnings, setOpenWarnings] = createSignal<string[]>([]);
+  const [relinkOpen, setRelinkOpen] = createSignal(false);
 
   onMount(() => {
     // Initialize persistent state auto-save
@@ -459,6 +462,28 @@ const App: Component = () => {
         </span>
       </div>
 
+      {/*
+        Media problems are surfaced as a bar rather than left to be discovered
+        as a black clip. The re-grant it offers has to happen inside a click:
+        the browser refuses a permission request outside a user gesture, which
+        is why nothing attempts one on startup.
+      */}
+      <Show when={hasMediaProblems()}>
+        <div class="flex items-center gap-2 px-3 py-1.5 bg-amber-500/15 border-b border-amber-500/40 text-[11px] shrink-0">
+          <span>⚠</span>
+          <span class="text-foreground">
+            {mediaProblems().length} media file
+            {mediaProblems().length === 1 ? "" : "s"} cannot be used.
+          </span>
+          <button
+            class="px-2 py-0.5 rounded bg-amber-500 text-black text-[10px] font-medium hover:bg-amber-400"
+            onClick={() => setRelinkOpen(true)}
+          >
+            Reconnect media
+          </button>
+        </div>
+      </Show>
+
       {/* Panel Layout */}
       <div class="flex-1 min-h-0">
         {/* @ts-expect-error - custom element */}
@@ -478,6 +503,7 @@ const App: Component = () => {
 
       {/* Export Dialog */}
       <ExportDialog open={exportOpen()} onClose={() => setExportOpen(false)} />
+      <RelinkDialog open={relinkOpen()} onClose={() => setRelinkOpen(false)} />
 
       {/*
         Notes from opening an older project — offline media, trimmed overlaps,
