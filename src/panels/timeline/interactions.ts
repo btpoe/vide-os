@@ -236,6 +236,124 @@ export function beginTrim(
   });
 }
 
+// ── Slip, slide and roll ──────────────────────────────────────────────
+
+/**
+ * Slip: change what a clip shows without moving it.
+ *
+ * Dragging right shows *later* material, which means dragging the picture
+ * leftward under a fixed window — the same convention every NLE uses, and the
+ * reason the delta is negated.
+ */
+export function beginSlip(event: PointerEvent, trackId: string, clipId: string): void {
+  event.stopPropagation();
+  const found = findClip(doc(), clipId);
+  if (!found) return;
+
+  const originalIn = found.clip.inPointFrames;
+  const speed = found.clip.speed;
+
+  trackPointer(event, {
+    label: "Slip clip",
+    icon: "⇔",
+    onMove: (_frame, deltaFrames) => {
+      const target = Math.round(originalIn - deltaFrames * speed);
+      applyEdit("Slip clip", (d) => edits.slipClipTo(d, trackId, clipId, target));
+    },
+  });
+}
+
+/**
+ * Slide: move a clip between its neighbours, which absorb the difference.
+ *
+ * The clip keeps its content and duration; the cuts either side of it move.
+ */
+export function beginSlide(event: PointerEvent, trackId: string, clipId: string): void {
+  event.stopPropagation();
+  const found = findClip(doc(), clipId);
+  if (!found) return;
+
+  const originalStart = found.clip.startFrame;
+  const snapTargets = candidates(clipId);
+
+  trackPointer(event, {
+    label: "Slide clip",
+    icon: "⇹",
+    onMove: (_frame, deltaFrames) => {
+      const wanted = Math.round(originalStart + deltaFrames);
+      const { frame, snapped } = snapFrame(timelineView(), wanted, snapTargets);
+      setSnapGuideFrame(snapped);
+      applyEdit("Slide clip", (d) => edits.slideClipTo(d, trackId, clipId, frame));
+    },
+  });
+}
+
+/**
+ * Roll: move the cut between two clips without changing the total length.
+ *
+ * Grabbed from the clip on the *left* of the cut, which is what the edge
+ * handle passes in.
+ */
+export function beginRoll(
+  event: PointerEvent,
+  trackId: string,
+  leftClipId: string,
+): void {
+  event.stopPropagation();
+  const found = findClip(doc(), leftClipId);
+  if (!found) return;
+
+  const originalCut = clipEndFrame(found.clip);
+  const snapTargets = candidates(leftClipId);
+
+  trackPointer(event, {
+    label: "Roll edit",
+    icon: "⇎",
+    onMove: (_frame, deltaFrames) => {
+      const wanted = Math.round(originalCut + deltaFrames);
+      const { frame, snapped } = snapFrame(timelineView(), wanted, snapTargets);
+      setSnapGuideFrame(snapped);
+      applyEdit("Roll edit", (d) => edits.rollEditTo(d, trackId, leftClipId, frame));
+    },
+  });
+}
+
+/**
+ * Ripple trim: trim an edge and move everything after it to match.
+ *
+ * The same gesture as an ordinary trim, so it is the same handle with a
+ * modifier held rather than a separate grab target.
+ */
+export function beginRippleTrim(
+  event: PointerEvent,
+  trackId: string,
+  clipId: string,
+  side: "start" | "end",
+): void {
+  event.stopPropagation();
+  const found = findClip(doc(), clipId);
+  if (!found) return;
+
+  const anchor = side === "start" ? found.clip.startFrame : clipEndFrame(found.clip);
+  const snapTargets = candidates(clipId);
+
+  trackPointer(event, {
+    label: "Ripple trim",
+    icon: side === "start" ? "⟸" : "⟹",
+    onMove: (_frame, deltaFrames) => {
+      const wanted = Math.round(anchor + deltaFrames);
+      const { frame, snapped } = snapFrame(timelineView(), wanted, snapTargets);
+      setSnapGuideFrame(snapped);
+      // The target is absolute and the shift is computed from the clip'''s
+      // current end, so re-applying during a drag converges on the pointer
+      // rather than accumulating one ripple per pointer move.
+      applyEdit("Ripple trim", (d) => {
+        edits.rippleTrim(d, trackId, clipId, side, frame);
+      });
+    },
+  });
+}
+
 // ── Razor ─────────────────────────────────────────────────────────────
 
 /** Splits the clip under the pointer. One click, one undo step. */

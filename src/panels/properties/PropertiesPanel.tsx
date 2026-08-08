@@ -12,12 +12,13 @@ import {
   clipAudioSettings,
   setClipFade,
   setClipLinkedAudio,
+  setClipSpeed,
 } from "@/stores/project-store";
 import { timelineState } from "@/stores/timeline-store";
 import { EFFECT_DEFINITIONS } from "@/renderer/effects-pipeline";
 import { TRANSITION_DEFINITIONS } from "@/renderer/transitions";
 import { clipParamPath, effectParam } from "@/model/edits";
-import { framesToSeconds, framesToTimecode } from "@/lib/timecode";
+import { framesToSeconds, framesToTimecode, type FrameRate } from "@/lib/timecode";
 import type { BlendMode, FitMode, TextStyle } from "@/model/doc";
 import { ParamRow } from "./ParamRow";
 
@@ -123,10 +124,7 @@ const PropertiesPanel: Component = () => {
                     label="In Point"
                     value={timecode(current().clip.inPointFrames)}
                   />
-                  <PropRow
-                    label="Speed"
-                    value={`${current().clip.speed.toFixed(2)}×`}
-                  />
+
                   <Show when={current().asset}>
                     {(asset) => (
                       <Show when={asset().width && asset().height}>
@@ -138,6 +136,16 @@ const PropertiesPanel: Component = () => {
                     )}
                   </Show>
                 </div>
+              </Section>
+
+              <Section title="Speed">
+                <SpeedControls
+                  trackId={trackId()}
+                  clipId={clipId()}
+                  speed={current().clip.speed}
+                  durationFrames={current().clip.durationFrames}
+                  rate={rate()}
+                />
               </Section>
 
               <Show when={isVideo()}>
@@ -535,6 +543,82 @@ const PropertiesPanel: Component = () => {
     </div>
   );
 };
+
+const SPEED_PRESETS = [0.25, 0.5, 1, 2, 4];
+
+/**
+ * Constant-speed retime.
+ *
+ * Pitch is not preserved: a slowed clip sounds lower. Web Audio's
+ * `playbackRate` resamples, and there is no `preservesPitch` on an
+ * `AudioBufferSourceNode` — keeping pitch needs a time-stretcher, which is not
+ * built. Saying so beats a checkbox that does nothing, which is what most of
+ * this panel used to be.
+ */
+const SpeedControls: Component<{
+  trackId: string;
+  clipId: string;
+  speed: number;
+  durationFrames: number;
+  rate: FrameRate;
+}> = (props) => (
+  <div class="space-y-2">
+    <div class="flex items-center gap-1">
+      <input
+        type="range"
+        min={0.25}
+        max={4}
+        step={0.05}
+        value={props.speed}
+        onInput={(e) =>
+          setClipSpeed(props.trackId, props.clipId, parseFloat(e.currentTarget.value))
+        }
+        class="flex-1 h-1 accent-primary cursor-pointer"
+      />
+      <input
+        type="number"
+        min={0.25}
+        max={4}
+        step={0.05}
+        value={Number(props.speed.toFixed(2))}
+        onChange={(e) => {
+          const parsed = parseFloat(e.currentTarget.value);
+          if (Number.isFinite(parsed))
+            setClipSpeed(props.trackId, props.clipId, parsed);
+        }}
+        class="w-14 shrink-0 px-1 py-0.5 text-[10px] text-right font-mono bg-input border border-border rounded text-foreground"
+      />
+      <span class="text-[10px] text-muted-foreground w-3">×</span>
+    </div>
+
+    <div class="flex gap-1">
+      <For each={SPEED_PRESETS}>
+        {(preset) => (
+          <button
+            class={`px-1.5 py-0.5 text-[9px] rounded border transition-colors ${
+              Math.abs(props.speed - preset) < 0.001
+                ? "bg-primary/20 border-primary text-primary"
+                : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setClipSpeed(props.trackId, props.clipId, preset)}
+          >
+            {preset}×
+          </button>
+        )}
+      </For>
+    </div>
+
+    <div class="text-[10px] text-muted-foreground">
+      {framesToTimecode(props.durationFrames, props.rate)} on the timeline
+      <Show when={Math.abs(props.speed - 1) > 0.001}>
+        <span class="text-muted-foreground/60">
+          {" "}
+          · audio is pitched {props.speed > 1 ? "up" : "down"}
+        </span>
+      </Show>
+    </div>
+  </div>
+);
 
 /** One effect and its parameters. Order in the chain changes the picture. */
 const EffectCard: Component<{

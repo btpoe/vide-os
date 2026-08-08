@@ -13,9 +13,9 @@
  * did nothing at all.
  */
 
-import { applyEdit, doc } from "@/stores/project-store";
+import { applyEdit, doc, playheadFrame } from "@/stores/project-store";
 import * as edits from "@/model/edits";
-import { timelineState, clearSelection } from "@/stores/timeline-store";
+import { timelineState, clearSelection, selectClip } from "@/stores/timeline-store";
 
 export function hasSelection(): boolean {
   return timelineState.selectedClips.length > 0;
@@ -63,4 +63,95 @@ export function selectionIsLive(): boolean {
       .tracks.find((t) => t.id === ref.trackId)
       ?.clips.some((c) => c.id === ref.clipId),
   );
+}
+
+// ── Clipboard ─────────────────────────────────────────────────────────
+
+/**
+ * The clipboard lives in a module variable, not the document.
+ *
+ * It is not part of the project — pasting after an undo should still paste
+ * what was copied — and it deliberately does not touch the system clipboard,
+ * which cannot hold a clip and would make Cmd-C in a text field ambiguous.
+ */
+let clipboard: edits.ClipboardContents | null = null;
+
+export function hasClipboard(): boolean {
+  return clipboard !== null;
+}
+
+export function copySelectedClips(): void {
+  const refs = [...timelineState.selectedClips];
+  if (refs.length === 0) return;
+  // Reading the document does not change it, so this is not an undo step.
+  clipboard = edits.copyClips(doc(), refs);
+}
+
+export function cutSelectedClips(): void {
+  copySelectedClips();
+  deleteSelectedClips();
+}
+
+/**
+ * Pastes at the playhead, on the track the selection came from.
+ *
+ * The pasted clips become the selection, so the usual next move — nudging or
+ * dragging them into place — works without a click.
+ */
+export function pasteClips(): void {
+  const contents = clipboard;
+  if (!contents) return;
+
+  const targetTrack =
+    timelineState.selectedClips[0]?.trackId ??
+    doc().tracks.find((t) => t.kind === "video")?.id;
+  if (!targetTrack) return;
+
+  let created: string[] = [];
+  applyEdit(
+    "Paste",
+    (d) => {
+      created = edits.pasteClips(d, contents, targetTrack, playheadFrame());
+    },
+    { icon: "📋" },
+  );
+
+  clearSelection();
+  for (const clipId of created) {
+    const track = doc().tracks.find((t) => t.clips.some((c) => c.id === clipId));
+    if (track) selectClip({ trackId: track.id, clipId }, true);
+  }
+}
+
+export function duplicateSelectedClips(): void {
+  const refs = [...timelineState.selectedClips];
+  if (refs.length === 0) return;
+
+  let created: string[] = [];
+  applyEdit(
+    "Duplicate",
+    (d) => {
+      created = edits.duplicateClips(d, refs);
+    },
+    { icon: "⧉" },
+  );
+
+  clearSelection();
+  for (const clipId of created) {
+    const track = doc().tracks.find((t) => t.clips.some((c) => c.id === clipId));
+    if (track) selectClip({ trackId: track.id, clipId }, true);
+  }
+}
+
+/** Deletes the selection and closes the gaps it leaves. */
+export function rippleDeleteSelectedClips(): void {
+  const refs = [...timelineState.selectedClips];
+  if (refs.length === 0) return;
+
+  applyEdit(
+    `Ripple delete ${refs.length} clip${refs.length > 1 ? "s" : ""}`,
+    (d) => edits.rippleDelete(d, refs),
+    { icon: "⇤" },
+  );
+  clearSelection();
 }

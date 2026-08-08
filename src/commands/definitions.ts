@@ -31,7 +31,17 @@ import {
 import { undo, redo, canUndo, canRedo } from "@/stores/history-store";
 import { setSelectedTool } from "@/stores/ui-store";
 import type { Command } from "./registry";
-import { deleteSelectedClips, nudgeSelectedClips, hasSelection } from "./clip-edits";
+import {
+  deleteSelectedClips,
+  rippleDeleteSelectedClips,
+  nudgeSelectedClips,
+  hasSelection,
+  copySelectedClips,
+  cutSelectedClips,
+  pasteClips,
+  duplicateSelectedClips,
+  hasClipboard,
+} from "./clip-edits";
 
 /**
  * Moves the playhead and scrolls it into view.
@@ -133,6 +143,46 @@ export const commands: Command[] = [
     run: deleteSelectedClips,
   },
   {
+    id: "edit.rippleDelete",
+    label: "Ripple Delete",
+    shortcut: "Shift+Delete",
+    category: "Editing",
+    enabled: hasSelection,
+    run: rippleDeleteSelectedClips,
+  },
+  {
+    id: "edit.copy",
+    label: "Copy",
+    shortcut: "Mod+C",
+    category: "Editing",
+    enabled: hasSelection,
+    run: copySelectedClips,
+  },
+  {
+    id: "edit.cut",
+    label: "Cut",
+    shortcut: "Mod+X",
+    category: "Editing",
+    enabled: hasSelection,
+    run: cutSelectedClips,
+  },
+  {
+    id: "edit.paste",
+    label: "Paste",
+    shortcut: "Mod+V",
+    category: "Editing",
+    enabled: hasClipboard,
+    run: pasteClips,
+  },
+  {
+    id: "edit.duplicate",
+    label: "Duplicate",
+    shortcut: "Mod+D",
+    category: "Editing",
+    enabled: hasSelection,
+    run: duplicateSelectedClips,
+  },
+  {
     id: "edit.nudgeLeft",
     label: "Nudge Left One Frame",
     shortcut: "Shift+ArrowLeft",
@@ -218,8 +268,6 @@ export const commands: Command[] = [
   },
 
   // ── Tools ──────────────────────────────────────────────────────────
-  // Only tools the timeline actually implements get a shortcut. Trim, slip
-  // and slide are registered nowhere until they do something.
   {
     id: "tool.select",
     label: "Select Tool",
@@ -233,6 +281,27 @@ export const commands: Command[] = [
     shortcut: "C",
     category: "Tools",
     run: () => setSelectedTool("razor"),
+  },
+  {
+    id: "tool.trim",
+    label: "Trim Tool",
+    shortcut: "T",
+    category: "Tools",
+    run: () => setSelectedTool("trim"),
+  },
+  {
+    id: "tool.slip",
+    label: "Slip Tool",
+    shortcut: "Y",
+    category: "Tools",
+    run: () => setSelectedTool("slip"),
+  },
+  {
+    id: "tool.slide",
+    label: "Slide Tool",
+    shortcut: "U",
+    category: "Tools",
+    run: () => setSelectedTool("slide"),
   },
   {
     id: "tool.text",

@@ -8,7 +8,15 @@ import { uiState } from "@/stores/ui-store";
 import { previewVersion } from "@/lib/media-previews";
 import { getCachedWaveform, waveformToSvgPath } from "@/lib/waveform";
 import { getCachedThumbnail } from "@/lib/clip-thumbnails";
-import { beginClipDrag, beginTrim, razorAt } from "./interactions";
+import {
+  beginClipDrag,
+  beginTrim,
+  beginRippleTrim,
+  beginRoll,
+  beginSlip,
+  beginSlide,
+  razorAt,
+} from "./interactions";
 import { mediaState } from "@/stores/media-store";
 
 /** Hit area for the trim handles at each end. */
@@ -64,6 +72,14 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
     return getCachedThumbnail(id);
   });
 
+  const edgeGrabbable = () =>
+    uiState.selectedTool === "select" || uiState.selectedTool === "trim";
+
+  const edgeHint = () =>
+    uiState.selectedTool === "trim"
+      ? "Roll the cut"
+      : "Drag to trim · hold Alt to ripple";
+
   const palette = () =>
     props.clip.source.type === "text"
       ? "168,85,247"
@@ -88,7 +104,49 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
       { trackId: props.track.id, clipId: props.clip.id },
       event.shiftKey || event.metaKey || event.ctrlKey,
     );
-    beginClipDrag(event, props.track.id, props.clip.id);
+
+    // Slip and slide are grabs of the clip body, not of an edge: the whole
+    // clip is the handle, and which edit happens is the tool's business.
+    switch (uiState.selectedTool) {
+      case "slip":
+        beginSlip(event, props.track.id, props.clip.id);
+        return;
+      case "slide":
+        beginSlide(event, props.track.id, props.clip.id);
+        return;
+      default:
+        beginClipDrag(event, props.track.id, props.clip.id);
+    }
+  };
+
+  /**
+   * Which edit an edge handle performs.
+   *
+   * The Trim tool rolls the cut — the two clips either side move together —
+   * while the Select tool trims one clip and leaves a gap. Holding Alt makes
+   * either one ripple, closing the gap behind it. These are the four things
+   * you can do to an edge, on one handle, rather than four handles.
+   */
+  const grabEdge = (event: PointerEvent, side: "start" | "end") => {
+    const { id: trackId } = props.track;
+    const clipId = props.clip.id;
+
+    if (uiState.selectedTool === "trim") {
+      // Rolling is defined from the clip on the left of the cut.
+      if (side === "end") beginRoll(event, trackId, clipId);
+      else beginRoll(event, trackId, previousClipId() ?? clipId);
+      return;
+    }
+    if (event.altKey) beginRippleTrim(event, trackId, clipId, side);
+    else beginTrim(event, trackId, clipId, side);
+  };
+
+  /** The clip before this one on the same track, if they are butted. */
+  const previousClipId = (): string | null => {
+    const index = props.track.clips.findIndex((c) => c.id === props.clip.id);
+    const previous = props.track.clips[index - 1];
+    if (!previous || clipEndFrame(previous) !== props.clip.startFrame) return null;
+    return previous.id;
   };
 
   return (
@@ -100,6 +158,8 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
       classList={{
         "cursor-grab": uiState.selectedTool === "select",
         "cursor-crosshair": uiState.selectedTool === "razor",
+        "cursor-ew-resize":
+          uiState.selectedTool === "slip" || uiState.selectedTool === "slide",
         "opacity-50": !props.clip.enabled,
       }}
       style={{
@@ -147,17 +207,19 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
         </div>
       </Show>
 
-      {/* Trim handles. Wider than they look, so they are catchable. */}
-      <Show when={uiState.selectedTool === "select" && width() > TRIM_HANDLE_PX * 3}>
+      {/* Edge handles. Wider than they look, so they are catchable. */}
+      <Show when={edgeGrabbable() && width() > TRIM_HANDLE_PX * 3}>
         <div
           class="absolute inset-y-0 left-0 cursor-ew-resize hover:bg-white/25"
           style={{ width: `${TRIM_HANDLE_PX}px` }}
-          onPointerDown={(e) => beginTrim(e, props.track.id, props.clip.id, "start")}
+          title={edgeHint()}
+          onPointerDown={(e) => grabEdge(e, "start")}
         />
         <div
           class="absolute inset-y-0 right-0 cursor-ew-resize hover:bg-white/25"
           style={{ width: `${TRIM_HANDLE_PX}px` }}
-          onPointerDown={(e) => beginTrim(e, props.track.id, props.clip.id, "end")}
+          title={edgeHint()}
+          onPointerDown={(e) => grabEdge(e, "end")}
         />
       </Show>
     </div>

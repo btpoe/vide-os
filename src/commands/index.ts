@@ -15,4 +15,14 @@ export { parseChord, chordFromEvent, chordsMatch, formatChord } from "./keys";
 
 export { commands } from "./definitions";
 
-export { deleteSelectedClips, nudgeSelectedClips, hasSelection } from "./clip-edits";
+export {
+  deleteSelectedClips,
+  rippleDeleteSelectedClips,
+  nudgeSelectedClips,
+  hasSelection,
+  copySelectedClips,
+  cutSelectedClips,
+  pasteClips,
+  duplicateSelectedClips,
+  hasClipboard,
+} from "./clip-edits";

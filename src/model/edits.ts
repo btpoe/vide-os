@@ -47,6 +47,21 @@ function findClip(doc: Draft, trackId: string, clipId: string): Clip | undefined
   return track(doc, trackId)?.clips.find((c) => c.id === clipId);
 }
 
+/**
+ * Puts an already-built clip on a track.
+ *
+ * `overwrite` clears whatever it lands on; `fit` finds the nearest free slot
+ * to the right. Shared by insert and paste so a pasted clip cannot end up
+ * overlapping when an inserted one would not.
+ */
+function placeClip(doc: Draft, t: Track, clip: Clip, mode: "overwrite" | "fit"): void {
+  fitToSource(doc, clip);
+  if (mode === "overwrite") clearRange(t, clip.startFrame, clip.durationFrames);
+  else clip.startFrame = findFreeSlot(t, clip.startFrame, clip.durationFrames);
+  t.clips.push(clip);
+  sortClips(t);
+}
+
 function sortClips(t: Track): void {
   t.clips.sort((a, b) => a.startFrame - b.startFrame);
 }
@@ -471,6 +486,12 @@ export function trimClipStart(
   trackId: string,
   clipId: string,
   toStartFrame: number,
+  /**
+   * Ripple trimming pushes the neighbours out of the way, so for it the
+   * neighbour is not a limit. Nothing else should pass this: an ordinary trim
+   * that overran its neighbour would produce an overlap.
+   */
+  ignoreNeighbour = false,
 ): void {
   const t = track(doc, trackId);
   const clip = t?.clips.find((c) => c.id === clipId);
@@ -486,7 +507,7 @@ export function trimClipStart(
   // Can't extend into the previous clip.
   const index = t.clips.indexOf(clip);
   const previous = t.clips[index - 1];
-  if (previous) target = Math.max(target, clipEndFrame(previous));
+  if (previous && !ignoreNeighbour) target = Math.max(target, clipEndFrame(previous));
 
   // Must leave a clip behind.
   target = Math.min(target, end - MIN_CLIP_FRAMES);
@@ -516,6 +537,8 @@ export function trimClipEnd(
   trackId: string,
   clipId: string,
   toEndFrame: number,
+  /** See `trimClipStart`. */
+  ignoreNeighbour = false,
 ): void {
   const t = track(doc, trackId);
   const clip = t?.clips.find((c) => c.id === clipId);
@@ -536,7 +559,7 @@ export function trimClipEnd(
   // Can't run into the next clip.
   const index = t.clips.indexOf(clip);
   const next = t.clips[index + 1];
-  if (next) target = Math.min(target, next.startFrame);
+  if (next && !ignoreNeighbour) target = Math.min(target, next.startFrame);
 
   clip.durationFrames = target - clip.startFrame;
   clampFades(clip);
@@ -631,6 +654,301 @@ export function slideClip(
 }
 
 /** Sets playback speed, keeping the clip's start fixed and rescaling its length. */
+/**
+ * Trims an edge and closes the gap behind it, moving everything after.
+ *
+ * The difference from a plain trim is what happens to the rest of the track:
+ * an ordinary trim leaves a hole, a ripple trim shortens the whole sequence.
+ * Returns the number of frames the tail moved, which is what the caller needs
+ * to keep other tracks in step if it wants to.
+ */
+export function rippleTrim(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  side: "start" | "end",
+  toFrame: number,
+): number {
+  const t = track(doc, trackId);
+  const clip = t?.clips.find((c) => c.id === clipId);
+  if (!t || !clip || t.locked) return 0;
+
+  const before = { start: clip.startFrame, end: clipEndFrame(clip) };
+
+  if (side === "end") {
+    trimClipEnd(doc, trackId, clipId, toFrame, true);
+    const shift = clipEndFrame(clip) - before.end;
+    if (shift !== 0) shiftFrom(t, before.end, shift, clip.id);
+    return shift;
+  }
+
+  trimClipStart(doc, trackId, clipId, toFrame, true);
+  // Trimming the head leaves the clip where it was and shortens it from the
+  // left; rippling then pulls it — and everything after — back to close the
+  // gap, so the cut before it stays butted.
+  const shift = clip.startFrame - before.start;
+  if (shift !== 0) shiftFrom(t, before.start, -shift, null);
+  return -shift;
+}
+
+/**
+ * Moves every clip starting at or after `fromFrame` by `delta`.
+ *
+ * `exceptId` is the clip being trimmed, which has already moved itself.
+ */
+function shiftFrom(
+  t: Track,
+  fromFrame: number,
+  delta: number,
+  exceptId: string | null,
+): void {
+  for (const clip of t.clips) {
+    if (clip.id === exceptId) continue;
+    if (clip.startFrame >= fromFrame)
+      clip.startFrame = Math.max(0, clip.startFrame + delta);
+  }
+  sortClips(t);
+}
+
+/**
+ * Moves the cut between two butt-joined clips.
+ *
+ * A roll changes where one shot becomes the next without changing the length
+ * of the sequence: the outgoing clip grows by exactly what the incoming one
+ * loses. Both therefore need material to grow into, which is what most of this
+ * function is about — a roll that silently freeze-framed one side would be
+ * worse than a roll that refuses.
+ *
+ * Returns the frames actually moved, which may be less than asked for.
+ */
+export function rollEdit(
+  doc: Draft,
+  trackId: string,
+  leftClipId: string,
+  deltaFrames: number,
+): number {
+  const t = track(doc, trackId);
+  if (!t || t.locked) return 0;
+
+  const index = t.clips.findIndex((c) => c.id === leftClipId);
+  if (index < 0) return 0;
+
+  const left = t.clips[index];
+  const right = t.clips[index + 1];
+  // Only a real cut can be rolled; across a gap there is no single boundary.
+  if (!right || clipEndFrame(left) !== right.startFrame) return 0;
+
+  let delta = Math.round(deltaFrames);
+
+  // Neither side may disappear.
+  delta = Math.min(delta, right.durationFrames - MIN_CLIP_FRAMES);
+  delta = Math.max(delta, -(left.durationFrames - MIN_CLIP_FRAMES));
+
+  // Rolling right extends the left clip past its out point, and consumes the
+  // right clip's head; rolling left does the reverse.
+  const leftAvailable = availableSourceFrames(doc, left);
+  if (leftAvailable !== null) {
+    const headroom = leftAvailable - (left.inPointFrames + clipSourceSpan(left));
+    delta = Math.min(delta, Math.floor(headroom / left.speed));
+  }
+  delta = Math.max(delta, -Math.floor(right.inPointFrames / right.speed));
+
+  if (delta === 0) return 0;
+
+  left.durationFrames += delta;
+  right.startFrame += delta;
+  right.durationFrames -= delta;
+  right.inPointFrames += Math.round(delta * right.speed);
+
+  clampFades(left);
+  clampFades(right);
+  // A transition across this cut is bounded by both clips; the roll may have
+  // taken away the material it was using.
+  clampTransitions(doc, t);
+  return delta;
+}
+
+/** Shortens any transition that no longer fits the clips it spans. */
+function clampTransitions(doc: Draft, t: Track): void {
+  for (const transition of t.transitions) {
+    const left = t.clips.find((c) => c.id === transition.leftClipId);
+    const right = t.clips.find((c) => c.id === transition.rightClipId);
+    if (!left || !right) continue;
+
+    let length = transition.durationFrames;
+    length = Math.min(
+      length,
+      left.durationFrames - MIN_CLIP_FRAMES,
+      right.durationFrames - MIN_CLIP_FRAMES,
+    );
+
+    const available = availableSourceFrames(doc, left);
+    if (available !== null) {
+      const used = left.inPointFrames + clipSourceSpan(left);
+      length = Math.min(length, Math.floor((available - used) / left.speed));
+    }
+    length = Math.min(length, Math.floor(right.inPointFrames / right.speed));
+
+    transition.durationFrames = Math.max(1, length);
+  }
+  // A transition with nothing left to span is removed rather than left at one
+  // frame, which would render as a flicker.
+  t.transitions = t.transitions.filter((tr) => tr.durationFrames >= 1);
+}
+
+/**
+ * Absolute forms of the relative edits, for dragging.
+ *
+ * A live drag reports its *total* offset from where it started and applies an
+ * edit on every pointer move. A relative edit would therefore accumulate —
+ * dragging 10 frames would apply 1, then 2, then 3… — so the interactions use
+ * these, which land on the same result no matter how many times they are
+ * called.
+ */
+
+/** Sets the source frame a clip starts on, leaving it where it is. */
+export function slipClipTo(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  inPointFrames: number,
+): void {
+  const clip = track(doc, trackId)?.clips.find((c) => c.id === clipId);
+  if (!clip) return;
+  slipClip(doc, trackId, clipId, (inPointFrames - clip.inPointFrames) / clip.speed);
+}
+
+/** Moves a clip between its neighbours, absorbing the difference into them. */
+export function slideClipTo(
+  doc: Draft,
+  trackId: string,
+  clipId: string,
+  startFrame: number,
+): void {
+  const clip = track(doc, trackId)?.clips.find((c) => c.id === clipId);
+  if (!clip) return;
+  slideClip(doc, trackId, clipId, startFrame - clip.startFrame);
+}
+
+/** Puts the cut after a clip at a given frame. */
+export function rollEditTo(
+  doc: Draft,
+  trackId: string,
+  leftClipId: string,
+  cutFrame: number,
+): number {
+  const clip = track(doc, trackId)?.clips.find((c) => c.id === leftClipId);
+  if (!clip) return 0;
+  return rollEdit(doc, trackId, leftClipId, cutFrame - clipEndFrame(clip));
+}
+
+// ── Clipboard ─────────────────────────────────────────────────────────
+
+/**
+ * Clips lifted out of the document, with their positions made relative.
+ *
+ * Relative because a paste lands at the playhead, not where the clips came
+ * from, and because copying from one track and pasting to another has to
+ * preserve the shape of the group rather than its absolute position.
+ */
+export interface ClipboardContents {
+  /** Frames from the earliest clip in the group. */
+  clips: { clip: Clip; offsetFrames: number; trackOffset: number }[];
+}
+
+/** Lifts the given clips out, ready to paste. */
+export function copyClips(
+  doc: Draft,
+  refs: readonly { trackId: string; clipId: string }[],
+): ClipboardContents | null {
+  const found: { clip: Clip; trackIndex: number }[] = [];
+  for (const ref of refs) {
+    const t = track(doc, ref.trackId);
+    const clip = t?.clips.find((c) => c.id === ref.clipId);
+    if (t && clip) found.push({ clip, trackIndex: doc.tracks.indexOf(t) });
+  }
+  if (found.length === 0) return null;
+
+  const earliest = Math.min(...found.map((f) => f.clip.startFrame));
+  const topTrack = Math.min(...found.map((f) => f.trackIndex));
+
+  return {
+    clips: found.map((f) => ({
+      // Cloned so a later edit to the document cannot change what is on the
+      // clipboard, which would be a very confusing bug to meet.
+      clip: cloneClip(f.clip, f.clip.id),
+      offsetFrames: f.clip.startFrame - earliest,
+      trackOffset: f.trackIndex - topTrack,
+    })),
+  };
+}
+
+/**
+ * Pastes at a frame, on and below the given track.
+ *
+ * Returns the ids of the clips created, so the caller can select them — which
+ * is what makes paste-then-drag work the way people expect.
+ */
+export function pasteClips(
+  doc: Draft,
+  contents: ClipboardContents,
+  trackId: string,
+  atFrame: number,
+): string[] {
+  const baseIndex = doc.tracks.findIndex((t) => t.id === trackId);
+  if (baseIndex < 0) return [];
+
+  const created: string[] = [];
+  for (const entry of contents.clips) {
+    const target = doc.tracks[baseIndex + entry.trackOffset];
+    // A group copied from three tracks pasted onto the last one has nowhere
+    // to put the lower clips; dropping them beats inventing tracks.
+    if (!target || target.locked) continue;
+    if (target.kind !== trackKindFor(entry.clip, doc)) continue;
+
+    const clip = cloneClip(entry.clip, newId("clip"));
+    clip.startFrame = Math.max(0, atFrame + entry.offsetFrames);
+    // Keyframes are clip-relative, so they come along untouched.
+    placeClip(doc, target, clip, "overwrite");
+    created.push(clip.id);
+  }
+  return created;
+}
+
+/**
+ * Which kind of track a clip belongs on.
+ *
+ * A clip copied from a video track must not land on an audio one: the source
+ * would be right but nothing would ever draw it.
+ */
+function trackKindFor(clip: Clip, doc: Draft): "video" | "audio" {
+  if (clip.source.type !== "asset") return "video";
+  const asset = findAsset(doc, clip.source.assetId);
+  return asset?.kind === "audio" ? "audio" : "video";
+}
+
+/** Copies clips in place, one duration to the right of each original. */
+export function duplicateClips(
+  doc: Draft,
+  refs: readonly { trackId: string; clipId: string }[],
+): string[] {
+  const contents = copyClips(doc, refs);
+  if (!contents) return [];
+
+  const created: string[] = [];
+  for (const ref of refs) {
+    const t = track(doc, ref.trackId);
+    const original = t?.clips.find((c) => c.id === ref.clipId);
+    if (!t || !original || t.locked) continue;
+
+    const clip = cloneClip(original, newId("clip"));
+    clip.startFrame = clipEndFrame(original);
+    placeClip(doc, t, clip, "overwrite");
+    created.push(clip.id);
+  }
+  return created;
+}
+
 export function setClipSpeed(
   doc: Draft,
   trackId: string,

@@ -271,6 +271,7 @@ function cloneAnimatable<T>(param: Animatable<T>): Animatable<T> {
       : param.value,
     keys: param.keys?.map((k) => ({
       ...k,
+      id: newId("key"),
       value: Array.isArray(k.value) ? ([...k.value] as unknown as T) : k.value,
       out: k.out ? ([...k.out] as [number, number]) : undefined,
       in: k.in ? ([...k.in] as [number, number]) : undefined,
@@ -286,6 +287,15 @@ function cloneAnimatable<T>(param: Animatable<T>): Animatable<T> {
  * refuses with a DataCloneError. Being explicit also means a newly added clip
  * field has to be considered here rather than silently shared by reference
  * between the two halves of a cut.
+ */
+/**
+ * A copy that can sit alongside the original.
+ *
+ * Every nested id is minted fresh — effects and keyframes included. The clip
+ * id is the caller's business because a split wants a new one and the
+ * clipboard wants to mirror the old one, but nothing inside should ever be
+ * shared: two objects with one id is a bug waiting for the first feature that
+ * looks one up without knowing which clip it came from.
  */
 export function cloneClip(clip: Clip, id: string): Clip {
   return {
@@ -323,7 +333,7 @@ export function cloneClip(clip: Clip, id: string): Clip {
     fit: clip.fit,
     blend: clip.blend,
     effects: clip.effects.map((e) => ({
-      id: e.id,
+      id: newId("fx"),
       definitionId: e.definitionId,
       enabled: e.enabled,
       params: Object.fromEntries(

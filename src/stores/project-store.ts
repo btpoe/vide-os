@@ -680,6 +680,23 @@ export function moveEffect(
   );
 }
 
+/**
+ * Constant-speed retime, 0.25× to 4×.
+ *
+ * Changing the speed changes the clip's length: the same source frames now
+ * take more or less time. The clip keeps its in-point, so it starts on the
+ * same picture and runs longer or shorter from there.
+ */
+export function setClipSpeed(trackId: string, clipId: string, speed: number): void {
+  applyEdit(
+    "Change speed",
+    (d) => {
+      edits.setClipSpeed(d, trackId, clipId, Math.max(0.25, Math.min(4, speed)));
+    },
+    { icon: "⏩", coalesceKey: `speed:${clipId}` },
+  );
+}
+
 // ── Per-clip audio ────────────────────────────────────────────────────
 
 /**

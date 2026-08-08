@@ -311,3 +311,150 @@ describe("effect parameters", () => {
     expect(clip(doc).effects.map((e) => e.id)).toEqual(["c", "a", "b"]);
   });
 });
+
+describe("clipboard", () => {
+  function twoTracks(): {
+    doc: ProjectDoc;
+    videoId: string;
+    audioId: string;
+  } {
+    const base = create(createEmptyDoc(), (d) => {
+      d.sequence.frameRate = FPS_30;
+      edits.upsertAsset(d, asset());
+      edits.upsertAsset(d, {
+        id: "music",
+        name: "music.mp3",
+        kind: "audio",
+        size: 1,
+        durationSec: 100,
+        hasAudio: true,
+      });
+      const video = d.tracks.find((t) => t.kind === "video")!;
+      const audio = d.tracks.find((t) => t.kind === "audio")!;
+      edits.insertClip(d, video.id, { type: "asset", assetId: "a" }, 30, {
+        startFrame: 10,
+        mode: "overwrite",
+      });
+      edits.insertClip(d, audio.id, { type: "asset", assetId: "music" }, 30, {
+        startFrame: 25,
+        mode: "overwrite",
+      });
+    });
+    return {
+      doc: base,
+      videoId: base.tracks.find((t) => t.kind === "video")!.id,
+      audioId: base.tracks.find((t) => t.kind === "audio")!.id,
+    };
+  }
+
+  function refsOf(doc: ProjectDoc) {
+    return doc.tracks.flatMap((t) =>
+      t.clips.map((c) => ({ trackId: t.id, clipId: c.id })),
+    );
+  }
+
+  it("keeps the shape of a group when pasted elsewhere", () => {
+    // The second clip starts 15 frames after the first; pasting at frame 100
+    // must preserve that, not stack them.
+    const { doc: base, videoId } = twoTracks();
+    const contents = edits.copyClips(base, refsOf(base))!;
+
+    const pasted = create(base, (d) => {
+      edits.pasteClips(d, contents, videoId, 100);
+    });
+
+    const video = pasted.tracks.find((t) => t.kind === "video")!;
+    const audio = pasted.tracks.find((t) => t.kind === "audio")!;
+    expect(video.clips.map((c) => c.startFrame)).toEqual([10, 100]);
+    expect(audio.clips.map((c) => c.startFrame)).toEqual([25, 115]);
+  });
+
+  it("gives pasted clips new ids", () => {
+    // Two clips sharing an id would make every later edit ambiguous.
+    const { doc: base, videoId } = twoTracks();
+    const contents = edits.copyClips(base, refsOf(base))!;
+    const pasted = create(base, (d) => {
+      edits.pasteClips(d, contents, videoId, 100);
+    });
+
+    const ids = pasted.tracks.flatMap((t) => t.clips.map((c) => c.id));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("carries effects and keyframes along", () => {
+    const { doc: withFx, videoId } = twoTracks();
+    const base = create(withFx, (d) => {
+      const clip = d.tracks.find((t) => t.kind === "video")!.clips[0];
+      clip.opacity = {
+        value: 1,
+        keys: [{ id: "k", timeFrames: 5, value: 0.5, interp: "linear" }],
+      };
+      clip.effects.push({
+        id: "fx",
+        definitionId: "gaussian_blur",
+        enabled: true,
+        params: { u_radius: { value: 0.05 } },
+      });
+    });
+
+    const contents = edits.copyClips(base, [
+      { trackId: videoId, clipId: base.tracks[0].clips[0].id },
+    ])!;
+    const pasted = create(base, (d) => {
+      edits.pasteClips(d, contents, videoId, 100);
+    });
+
+    const copy = pasted.tracks
+      .find((t) => t.kind === "video")!
+      .clips.find((c) => c.startFrame === 100)!;
+    expect(copy.effects[0].params.u_radius.value).toBe(0.05);
+    // Keyframes are clip-relative, so they land in the same place within it.
+    expect(copy.opacity.keys![0].timeFrames).toBe(5);
+    // Fresh ids inside, so the copy and the original are never confusable.
+    expect(copy.effects[0].id).not.toBe("fx");
+    expect(copy.opacity.keys![0].id).not.toBe("k");
+  });
+
+  it("does not paste a video clip onto an audio track", () => {
+    // The source would resolve, and nothing would ever draw it.
+    const { doc: base, videoId, audioId } = twoTracks();
+    const contents = edits.copyClips(base, [
+      { trackId: videoId, clipId: base.tracks[0].clips[0].id },
+    ])!;
+
+    const pasted = create(base, (d) => {
+      edits.pasteClips(d, contents, audioId, 100);
+    });
+    const audio = pasted.tracks.find((t) => t.kind === "audio")!;
+    expect(audio.clips).toHaveLength(1);
+  });
+
+  it("is unaffected by later edits to the document", () => {
+    // The clipboard holds a copy, not a reference into the document.
+    const { doc: base, videoId } = twoTracks();
+    const clipId = base.tracks[0].clips[0].id;
+    const contents = edits.copyClips(base, [{ trackId: videoId, clipId }])!;
+
+    const changed = create(base, (d) => {
+      edits.removeClip(d, videoId, clipId);
+    });
+    const pasted = create(changed, (d) => {
+      edits.pasteClips(d, contents, videoId, 100);
+    });
+
+    expect(
+      pasted.tracks.find((t) => t.kind === "video")!.clips.map((c) => c.startFrame),
+    ).toEqual([100]);
+  });
+
+  it("duplicates each clip directly after itself", () => {
+    const { doc: base, videoId } = twoTracks();
+    const clipId = base.tracks[0].clips[0].id;
+    const doubled = create(base, (d) => {
+      edits.duplicateClips(d, [{ trackId: videoId, clipId }]);
+    });
+
+    const clips = doubled.tracks.find((t) => t.kind === "video")!.clips;
+    expect(clips.map((c) => c.startFrame)).toEqual([10, 40]);
+  });
+});
