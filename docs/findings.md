@@ -510,6 +510,13 @@ rewritten.
 
 ## Open items not yet scheduled
 
+- **Subtitle parsing has never met a real file.** The SRT/VTT fixtures are
+  hand-written to cover the cases I know break — comma versus dot, optional
+  hours, CRLF, BOM, cue settings, missing index, no trailing newline. That is
+  not the same as a file produced by Premiere, Rev, YouTube's auto-captions or
+  a fansub group. Needs a pass with real files before the format layer can be
+  called done.
+
 - **`getVideoMetadata` is still the old `<video>`-based sniffer.** The media
   engine's `probeMedia` reports codecs and decodability properly, but the media
   pool's import path has not been switched over to it, so `hasAudio` there is

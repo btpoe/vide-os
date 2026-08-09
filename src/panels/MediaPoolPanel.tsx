@@ -9,6 +9,7 @@ import {
 import { formatFileSize, formatDuration } from "@/lib/fs-access";
 import { takeDragFileHandle } from "@/lib/drag-payload";
 import { problemFor } from "@/stores/media-problems";
+import { loadSource } from "@/stores/source-store";
 
 const TYPE_ICONS: Record<string, string> = {
   video: "🎬",
@@ -38,6 +39,7 @@ const MediaGridItem: Component<{ entry: MediaEntry; selected: boolean }> = (prop
           : "border-border hover:border-primary/40"
       }`}
       onClick={(e) => selectMedia(props.entry.id, e.shiftKey || e.metaKey)}
+      onDblClick={() => loadSource(props.entry.id)}
       draggable={true}
       onDragStart={handleDragStart}
     >
@@ -120,6 +122,7 @@ const MediaListItem: Component<{ entry: MediaEntry; selected: boolean }> = (prop
           : "hover:bg-accent text-muted-foreground hover:text-foreground"
       }`}
       onClick={(e) => selectMedia(props.entry.id, e.shiftKey || e.metaKey)}
+      onDblClick={() => loadSource(props.entry.id)}
       draggable={true}
       onDragStart={handleDragStart}
     >

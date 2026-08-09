@@ -51,6 +51,7 @@ import EffectsPanel from "./panels/EffectsPanel";
 import PropertiesPanel from "./panels/properties/PropertiesPanel";
 import MarkersPanel from "./panels/MarkersPanel";
 import CaptionsPanel from "./panels/CaptionsPanel";
+import SourceMonitorPanel from "./panels/SourceMonitorPanel";
 import RecoveryDialog from "./panels/RecoveryDialog";
 import {
   recoveryOffer,
@@ -115,6 +116,14 @@ const builtInPanels: PanelDefinition[] = [
     icon: "▶",
     category: "editing",
     component: () => createPanelElement("Preview", PreviewPanel),
+    defaultPosition: { area: "center-top" },
+  },
+  {
+    id: "source-monitor",
+    name: "Source",
+    icon: "🎞️",
+    category: "editing",
+    component: () => createPanelElement("Source", SourceMonitorPanel),
     defaultPosition: { area: "center-top" },
   },
   {

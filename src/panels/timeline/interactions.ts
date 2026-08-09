@@ -70,7 +70,8 @@ function trackPointer(
     /** Called once, only when movement first exceeds the threshold. */
     onStart?: () => void;
     onMove: (frame: number, deltaFrames: number, event: PointerEvent) => void;
-    onEnd?: () => void;
+    /** `started` is false when the pointer was released without dragging. */
+    onEnd?: (started: boolean) => void;
   },
 ): void {
   const startX = event.clientX;
@@ -106,7 +107,7 @@ function trackPointer(
       if (aborted) abortInteraction();
       else commitInteraction(options.label, options.icon);
     }
-    options.onEnd?.();
+    options.onEnd?.(started);
   };
 
   const onUp = () => finish();
@@ -164,24 +165,70 @@ export function beginClipDrag(
   event: PointerEvent,
   trackId: string,
   clipId: string,
+  /**
+   * Called when the pointer went down and up without dragging.
+   *
+   * Selection has to wait for that answer. Clicking a clip that is already
+   * part of a selection should narrow the selection to it — but *dragging*
+   * one should move the whole group, and on pointer-down there is no way to
+   * tell which is happening yet.
+   */
+  onTap?: () => void,
 ): void {
-  const found = findClip(doc(), clipId);
-  if (!found) return;
+  const document_ = doc();
 
-  const originalStart = found.clip.startFrame;
-  const duration = found.clip.durationFrames;
+  /**
+   * What moves: the whole selection if the grabbed clip is part of it, and
+   * just the grabbed clip otherwise. Dragging an unselected clip out of a
+   * selection is a common slip and moving five clips because of it is a nasty
+   * surprise.
+   */
+  const moving = timelineState.selectedClips.some((ref) => ref.clipId === clipId)
+    ? [...timelineState.selectedClips]
+    : [{ trackId, clipId }];
+
+  const trackIndex = (id: string) => document_.tracks.findIndex((t) => t.id === id);
+
+  const originals = moving
+    .map((ref) => {
+      const found = findClip(document_, ref.clipId);
+      if (!found) return null;
+      return {
+        clipId: ref.clipId,
+        startFrame: found.clip.startFrame,
+        durationFrames: found.clip.durationFrames,
+        trackIndex: trackIndex(ref.trackId),
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+  if (originals.length === 0) return;
+
+  const grabbed = originals.find((entry) => entry.clipId === clipId) ?? originals[0];
   const snapTargets = candidates(clipId);
 
+  // Where each clip is *now*, which changes as it crosses tracks mid-drag.
+  const currentTrack = new Map(
+    originals.map((entry) => [entry.clipId, document_.tracks[entry.trackIndex].id]),
+  );
+
   trackPointer(event, {
-    label: "Move clip",
+    label: moving.length > 1 ? `Move ${moving.length} clips` : "Move clip",
     icon: "↔",
-    onMove: (_frame, deltaFrames) => {
-      const wanted = Math.max(0, Math.round(originalStart + deltaFrames));
+    onEnd: (started) => {
+      if (!started) onTap?.();
+    },
+    onMove: (_frame, deltaFrames, moveEvent) => {
+      const wanted = Math.max(0, Math.round(grabbed.startFrame + deltaFrames));
 
       // Snap either edge, whichever is closer — butting a clip up against the
       // next one is as common as aligning its head.
       const head = snapFrame(timelineView(), wanted, snapTargets);
-      const tail = snapFrame(timelineView(), wanted + duration, snapTargets);
+      const tail = snapFrame(
+        timelineView(),
+        wanted + grabbed.durationFrames,
+        snapTargets,
+      );
 
       let start = wanted;
       let guide: number | null = null;
@@ -189,16 +236,63 @@ export function beginClipDrag(
         start = head.frame;
         guide = head.snapped;
       } else if (tail.snapped !== null) {
-        start = tail.frame - duration;
+        start = tail.frame - grabbed.durationFrames;
         guide = tail.snapped;
       }
       setSnapGuideFrame(guide);
 
-      applyEdit("Move clip", (d) =>
-        edits.moveClip(d, trackId, clipId, Math.max(0, start)),
-      );
+      const frameDelta = start - grabbed.startFrame;
+      const trackDelta = trackDeltaFrom(moveEvent, grabbed.trackIndex);
+
+      applyEdit("Move clip", (d) => {
+        const moves = originals.flatMap((entry) => {
+          const from = currentTrack.get(entry.clipId);
+          if (!from) return [];
+          const targetIndex = Math.max(
+            0,
+            Math.min(d.tracks.length - 1, entry.trackIndex + trackDelta),
+          );
+          return [
+            {
+              trackId: from,
+              clipId: entry.clipId,
+              toTrackId: d.tracks[targetIndex].id,
+              toStartFrame: entry.startFrame + frameDelta,
+            },
+          ];
+        });
+
+        // As a group, so the clips do not shove each other out of the way.
+        edits.moveClips(d, moves);
+
+        // A move between kinds is refused, so a clip may not have gone where
+        // it was asked; record where it actually is for the next pass.
+        for (const entry of originals) {
+          const landed = d.tracks.find((t) =>
+            t.clips.some((c) => c.id === entry.clipId),
+          );
+          if (landed) currentTrack.set(entry.clipId, landed.id);
+        }
+      });
     },
   });
+}
+
+/**
+ * How many tracks the pointer has moved, in track indices.
+ *
+ * Read from the lane under the pointer rather than from pixels, because lanes
+ * are individually resizable — a fixed height would drift after the first
+ * resize.
+ */
+function trackDeltaFrom(event: PointerEvent, fromIndex: number): number {
+  const element = document.elementFromPoint(event.clientX, event.clientY);
+  const lane = element?.closest<HTMLElement>("[data-track-lane]");
+  const laneId = lane?.dataset.trackLane;
+  if (!laneId) return 0;
+
+  const toIndex = doc().tracks.findIndex((t) => t.id === laneId);
+  return toIndex < 0 ? 0 : toIndex - fromIndex;
 }
 
 // ── Trim ──────────────────────────────────────────────────────────────

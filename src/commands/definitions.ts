@@ -36,6 +36,8 @@ import {
 } from "@/stores/timeline-view-store";
 import { undo, redo, canUndo, canRedo } from "@/stores/history-store";
 import { setSelectedTool } from "@/stores/ui-store";
+import { insertFromSource, canEditFromSource } from "./source-edits";
+import { sourceAssetId, markIn, markOut } from "@/stores/source-store";
 import type { Command } from "./registry";
 import {
   deleteSelectedClips,
@@ -271,6 +273,40 @@ export const commands: Command[] = [
     shortcut: "Mod+0",
     category: "Timeline",
     run: zoomToFrameLevel,
+  },
+
+  // ── Source monitor ─────────────────────────────────────────────────
+  {
+    id: "source.markIn",
+    label: "Mark In",
+    shortcut: "I",
+    category: "Source",
+    enabled: () => sourceAssetId() !== null,
+    run: markIn,
+  },
+  {
+    id: "source.markOut",
+    label: "Mark Out",
+    shortcut: "O",
+    category: "Source",
+    enabled: () => sourceAssetId() !== null,
+    run: markOut,
+  },
+  {
+    id: "source.insert",
+    label: "Insert from Source",
+    shortcut: ",",
+    category: "Source",
+    enabled: canEditFromSource,
+    run: () => insertFromSource("insert"),
+  },
+  {
+    id: "source.overwrite",
+    label: "Overwrite from Source",
+    shortcut: ".",
+    category: "Source",
+    enabled: canEditFromSource,
+    run: () => insertFromSource("overwrite"),
   },
 
   // ── Markers ────────────────────────────────────────────────────────

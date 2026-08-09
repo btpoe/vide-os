@@ -28,6 +28,7 @@ import {
   findAsset,
   assetDurationFrames,
 } from "./doc";
+import type { ContentKey } from "./ids";
 import { newId } from "./ids";
 import type { SubtitleCue, SubtitleStyle } from "./subtitles";
 import { evaluate, type Animatable, type Interp } from "@/lib/animation";
@@ -266,8 +267,15 @@ export function pruneUnusedAssets(doc: Draft): void {
 export interface InsertOptions {
   /** Where to place the clip. Defaults to the first free slot at or after 0. */
   startFrame?: number;
-  /** "overwrite" clears whatever is in the way; "fit" finds the next gap. */
-  mode?: "overwrite" | "fit";
+  /**
+   * What to do about whatever is already there.
+   *
+   * - `overwrite` clears the range, replacing what it lands on.
+   * - `fit` finds the next gap large enough, leaving everything alone.
+   * - `insert` pushes everything from the insertion point rightward, so
+   *   nothing is lost and the sequence gets longer.
+   */
+  mode?: "overwrite" | "fit" | "insert";
   inPointFrames?: number;
   overrides?: Partial<Clip>;
 }
@@ -296,6 +304,11 @@ export function insertClip(
 
   if (mode === "overwrite") {
     clearRange(t, clip.startFrame, clip.durationFrames);
+  } else if (mode === "insert") {
+    // A clip straddling the insertion point is split, so the second half
+    // moves with everything after it rather than being cut in two silently.
+    splitAt(doc, t, clip.startFrame);
+    shiftFrom(t, clip.startFrame, clip.durationFrames, null);
   } else {
     clip.startFrame = findFreeSlot(t, requested, clip.durationFrames);
   }
@@ -303,6 +316,12 @@ export function insertClip(
   t.clips.push(clip);
   sortClips(t);
   return clip;
+}
+
+/** Splits whichever clip covers a frame, if one does and not at its edge. */
+function splitAt(doc: Draft, t: Track, frame: number): void {
+  const covering = t.clips.find((c) => frame > c.startFrame && frame < clipEndFrame(c));
+  if (covering) splitClip(doc, t.id, covering.id, frame);
 }
 
 export function removeClip(doc: Draft, trackId: string, clipId: string): void {
@@ -396,7 +415,11 @@ export function moveClip(
 
   const target = Math.max(0, Math.round(toStartFrame));
 
-  if (to === from) {
+  // By id, not by identity: `track()` returns a fresh draft proxy each call,
+  // so a same-track move passed explicitly as `toTrackId` compared unequal and
+  // took the cross-track path — removing the clip from one proxy of the array
+  // and pushing it onto another, which loses whichever write lands first.
+  if (to.id === from.id) {
     if (options.mode === "overwrite") {
       clearRange(to, target, clip.durationFrames, clip.id);
       clip.startFrame = target;
@@ -841,6 +864,95 @@ export function rollEditTo(
   const clip = track(doc, trackId)?.clips.find((c) => c.id === leftClipId);
   if (!clip) return 0;
   return rollEdit(doc, trackId, leftClipId, cutFrame - clipEndFrame(clip));
+}
+
+/**
+ * Moves several clips as a group.
+ *
+ * Not a loop over `moveClip`: each move would see the others still in place
+ * and shove itself past them, so dragging three butted clips one frame to the
+ * right would scatter them. Detaching the whole set first means each one is
+ * placed against what is *staying*, which is the only sensible reading of
+ * "move these together".
+ */
+export function moveClips(
+  doc: Draft,
+  moves: readonly {
+    trackId: string;
+    clipId: string;
+    toTrackId: string;
+    toStartFrame: number;
+  }[],
+): void {
+  interface Pending {
+    clip: Clip;
+    to: Track;
+    startFrame: number;
+  }
+
+  const pending: Pending[] = [];
+
+  // Detach first. A locked track at either end takes the clip out of the move
+  // rather than the whole gesture.
+  for (const move of moves) {
+    const from = track(doc, move.trackId);
+    const to = track(doc, move.toTrackId);
+    const clip = from?.clips.find((c) => c.id === move.clipId);
+    if (!from || !to || !clip || from.locked || to.locked) continue;
+    if (to.kind !== from.kind) continue;
+
+    from.clips = from.clips.filter((c) => c.id !== move.clipId);
+    pruneTransitions(from);
+    pending.push({ clip, to, startFrame: Math.max(0, Math.round(move.toStartFrame)) });
+  }
+
+  for (const entry of pending) {
+    entry.clip.startFrame = findFreeSlot(
+      entry.to,
+      entry.startFrame,
+      entry.clip.durationFrames,
+    );
+    entry.to.clips.push(entry.clip);
+  }
+
+  for (const t of doc.tracks) sortClips(t);
+}
+
+// ── Three-point editing ───────────────────────────────────────────────
+
+export interface ThreePointEdit {
+  /** The asset being edited in. */
+  assetId: ContentKey;
+  /** Source frames to use: `[in, out)`. */
+  inPointFrames: number;
+  outPointFrames: number;
+  /** Where it lands on the timeline. */
+  atFrame: number;
+  /** Overwrite what is there, or push it out of the way. */
+  mode: "overwrite" | "insert";
+}
+
+/**
+ * The classic edit: mark in and out on a source, put the playhead on the
+ * timeline, and press one key.
+ *
+ * Three points, because the fourth is implied — the timeline out point is
+ * wherever the source's length puts it. That is the whole idea, and it is why
+ * this takes a source range rather than a duration.
+ */
+export function threePointEdit(
+  doc: Draft,
+  trackId: string,
+  edit: ThreePointEdit,
+): Clip | undefined {
+  const length = Math.round(edit.outPointFrames - edit.inPointFrames);
+  if (length < MIN_CLIP_FRAMES) return undefined;
+
+  return insertClip(doc, trackId, { type: "asset", assetId: edit.assetId }, length, {
+    startFrame: Math.max(0, Math.round(edit.atFrame)),
+    inPointFrames: Math.max(0, Math.round(edit.inPointFrames)),
+    mode: edit.mode,
+  });
 }
 
 // ── Clipboard ─────────────────────────────────────────────────────────

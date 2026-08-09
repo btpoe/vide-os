@@ -24,6 +24,15 @@ export interface TimelineState {
   snapEnabled: boolean;
   trackDragId: string | null;
   trackDropIndex: number | null;
+  /**
+   * Where an edit from the source monitor lands.
+   *
+   * One target per kind, because an edit carries picture and sound and they go
+   * to different places. Null means "the first of that kind", so a new project
+   * works without anyone having to arm a track first.
+   */
+  targetVideoTrackId: string | null;
+  targetAudioTrackId: string | null;
 }
 
 function loadTimelinePrefs(): Partial<TimelineState> {
@@ -42,6 +51,8 @@ const [timelineState, setTimelineState] = createStore<TimelineState>({
   snapEnabled: true,
   trackDragId: null,
   trackDropIndex: null,
+  targetVideoTrackId: null,
+  targetAudioTrackId: null,
   ...loadTimelinePrefs(),
 });
 
@@ -133,3 +144,37 @@ export function toggleSnap(): void {
 }
 
 export { timelineState, setTimelineState };
+
+// ── Track targeting ───────────────────────────────────────────────────
+
+/**
+ * The track an edit of this kind lands on.
+ *
+ * Falls back to the first track of the kind, and also falls back when the
+ * armed track has since been deleted — a stale id would otherwise make every
+ * edit silently do nothing.
+ */
+export function targetTrackId(kind: "video" | "audio"): string | null {
+  const armed =
+    kind === "video"
+      ? timelineState.targetVideoTrackId
+      : timelineState.targetAudioTrackId;
+
+  const tracks = doc().tracks.filter((t) => t.kind === kind);
+  if (armed && tracks.some((t) => t.id === armed)) return armed;
+  return tracks[0]?.id ?? null;
+}
+
+export function setTargetTrack(kind: "video" | "audio", trackId: string | null): void {
+  setTimelineState(
+    kind === "video" ? "targetVideoTrackId" : "targetAudioTrackId",
+    trackId,
+  );
+}
+
+/** Whether a track is the one edits land on. */
+export function isTargetTrack(trackId: string): boolean {
+  const track = doc().tracks.find((t) => t.id === trackId);
+  if (!track) return false;
+  return targetTrackId(track.kind) === trackId;
+}

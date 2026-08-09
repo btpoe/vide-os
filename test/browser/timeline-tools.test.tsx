@@ -8,7 +8,7 @@ import {
   undo,
   historyEntries,
 } from "@/stores/project-store";
-import { clearSelection } from "@/stores/timeline-store";
+import { clearSelection, selectClip, timelineState } from "@/stores/timeline-store";
 import { setSelectedTool } from "@/stores/ui-store";
 import {
   setViewportWidth,
@@ -331,5 +331,80 @@ describe("a click is not a drag", () => {
     // Counted rather than undone: the setup itself is a history entry, so
     // `undo()` succeeding proves nothing.
     expect(historyEntries().entries.length).toBe(entriesBefore);
+  });
+});
+
+describe("multi-select drag", () => {
+  it("moves every selected clip together", () => {
+    // Dragging one clip of a selection has to take the others with it, or a
+    // multi-clip selection is decorative.
+    const track = setUp();
+    const root = mountLane(track);
+
+    for (const clip of videoTrack().clips) {
+      selectClip({ trackId: track.id, clipId: clip.id }, true);
+    }
+    expect(timelineState.selectedClips).toHaveLength(3);
+
+    // The last clip has room to the right, so the group can shift.
+    drag(clipElement(root, 2), 30);
+
+    expect(layout()).toEqual([
+      [30, 30],
+      [60, 30],
+      [90, 30],
+    ]);
+    assertDocValid(doc());
+  });
+
+  it("keeps the spacing within the group", () => {
+    const track = setUp();
+    const root = mountLane(track);
+
+    // A group with a gap in it must keep the gap.
+    applyEdit("gap", (d) => {
+      const t = d.tracks.find((x) => x.kind === "video")!;
+      edits.moveClip(d, t.id, t.clips[2].id, 120);
+    });
+
+    for (const clip of videoTrack().clips) {
+      selectClip({ trackId: track.id, clipId: clip.id }, true);
+    }
+    drag(clipElement(root, 0), 10);
+
+    const starts = videoTrack().clips.map((c) => c.startFrame);
+    expect(starts[1] - starts[0]).toBe(30);
+    expect(starts[2] - starts[1]).toBe(90);
+  });
+
+  it("moves only the grabbed clip when it is not in the selection", () => {
+    // Dragging an unselected clip out of a selection is a common slip, and
+    // moving five clips because of it is a nasty surprise.
+    const track = setUp();
+    const root = mountLane(track);
+
+    selectClip({ trackId: track.id, clipId: videoTrack().clips[0].id });
+    drag(clipElement(root, 2), 30);
+
+    expect(layout()).toEqual([
+      [0, 30],
+      [30, 30],
+      [90, 30],
+    ]);
+  });
+
+  it("takes the whole group back in one undo", () => {
+    const track = setUp();
+    const root = mountLane(track);
+    for (const clip of videoTrack().clips) {
+      selectClip({ trackId: track.id, clipId: clip.id }, true);
+    }
+
+    const before = layout();
+    drag(clipElement(root, 2), 30);
+    expect(layout()).not.toEqual(before);
+
+    expect(undo()).toBe(true);
+    expect(layout()).toEqual(before);
   });
 });

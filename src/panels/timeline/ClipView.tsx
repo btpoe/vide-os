@@ -100,10 +100,14 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
       return;
     }
 
-    selectClip(
-      { trackId: props.track.id, clipId: props.clip.id },
-      event.shiftKey || event.metaKey || event.ctrlKey,
-    );
+    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    const ref = { trackId: props.track.id, clipId: props.clip.id };
+
+    // Selecting an *already selected* clip is deferred to pointer-up: doing it
+    // now would collapse a multi-clip selection to one clip, and then a drag
+    // would move only that one. See `beginClipDrag`'s `onTap`.
+    const deferSelection = selected() && !additive;
+    if (!deferSelection) selectClip(ref, additive);
 
     // Slip and slide are grabs of the clip body, not of an edge: the whole
     // clip is the handle, and which edit happens is the tool's business.
@@ -115,7 +119,9 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
         beginSlide(event, props.track.id, props.clip.id);
         return;
       default:
-        beginClipDrag(event, props.track.id, props.clip.id);
+        beginClipDrag(event, props.track.id, props.clip.id, () => {
+          if (deferSelection) selectClip(ref, false);
+        });
     }
   };
 

@@ -6,6 +6,7 @@ import {
   MAX_TRACK_HEIGHT,
   setTrackHeight,
 } from "@/stores/timeline-view-store";
+import { isTargetTrack, setTargetTrack } from "@/stores/timeline-store";
 
 export const TRACK_HEADER_WIDTH_PX = 128;
 
@@ -39,9 +40,27 @@ const TrackHeader: Component<{ track: Track; heightPx: number }> = (props) => {
       class="sticky left-0 z-20 shrink-0 flex items-center gap-1 px-2 border-b border-r border-border bg-panel-header"
       style={{ width: `${TRACK_HEADER_WIDTH_PX}px`, height: `${props.heightPx}px` }}
     >
-      <span class="text-[10px] shrink-0 text-muted-foreground">
+      {/*
+        The target indicator doubles as the kind indicator: an edit from the
+        source monitor lands here, and clicking arms a different track.
+      */}
+      <button
+        class="text-[10px] shrink-0 rounded px-0.5"
+        classList={{
+          "bg-primary/25 text-primary": isTargetTrack(props.track.id),
+          "text-muted-foreground/50 hover:text-muted-foreground": !isTargetTrack(
+            props.track.id,
+          ),
+        }}
+        onClick={() => setTargetTrack(props.track.kind, props.track.id)}
+        title={
+          isTargetTrack(props.track.id)
+            ? "Edits from the source land on this track"
+            : "Send edits from the source to this track"
+        }
+      >
         {props.track.kind === "audio" ? "🎵" : "🎬"}
-      </span>
+      </button>
       <span class="flex-1 text-[11px] truncate text-foreground">
         {props.track.name}
       </span>
