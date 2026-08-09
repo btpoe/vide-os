@@ -1,8 +1,11 @@
 # VideOS Architecture
 
-This describes where the codebase is going, not entirely where it is. Sections
-marked **Planned** are design decisions that have been made but not yet built;
-they exist here so that new code is written toward them rather than around them.
+This describes how the pieces fit. Everything below is built unless marked
+**Not built**, in which case the design is settled and the code is not there
+yet — recorded so new work is written toward it rather than around it.
+
+For what is left to do, see [`plan.md`](plan.md); for the log of defects found
+and trade-offs taken, [`findings.md`](findings.md).
 
 The target is a "solid creator NLE" — frame-accurate playback, deterministic
 export, real timeline navigation, multi-track A/V with per-clip volume and
@@ -18,58 +21,27 @@ motion tracking, nested sequences, multicam, EDL/OTIO interchange.
 index.tsx ──> App.tsx ──> <ve-panel-layout>  (docking, shadow DOM)
                  │              └─> <ve-panel> × N ──> Solid panel components
                  ├─> commands/   (all user actions, one registry)
-                 └─> stores/     (project, ui, media, timeline, history)
+                 └─> stores/     (project, ui, media, timeline, source, view)
 
-panels/PreviewPanel ──> renderer/compositor ──> renderer/effects-pipeline
-                                    │                    (8 GLSL effects)
-                                    └──> renderer/frame-source (<video> elements)
+model/          the document: frames, edits, invariants, snapshot history, io
+platform/       one interface, web implementation (FS Access, OPFS, IndexedDB)
+media/          WebCodecs decode per clip instance, refcounted frame cache
+audio/          one graph function, shared by live playback and offline render
+playback/       one clock, derived from AudioContext
+renderer/       scene (pure data) ──> graph (synchronous WebGL2)
+export/         codec negotiation, deterministic frame loop, muxing
 ```
 
-Stores are Solid `createStore`s persisted to `localStorage`. The renderer is
-WebGL2 with a ping-pong FBO chain for effects and a per-track composite pass.
-
----
-
-## Known defects this design is meant to remove
-
-These are load-bearing context for the decisions below.
-
-**Export is not deterministic.** `renderer/export-engine.ts` renders each frame
-then calls `requestFrame()` on a `canvas.captureStream(0)` feeding a
-`MediaRecorder`. MediaRecorder timestamps each frame at the moment it arrives,
-so the output's duration equals wall-clock render time, not timeline time. The
-`fps` setting is used only to pick sample times, never given to the recorder.
-The offline audio mixdown is then played back in _real time_ into the same
-stream, so it cannot line up. Filenames are chosen from the requested format
-while the mime falls back to WebM.
-
-**Playback is not frame-accurate.** `frame-source.ts` skips any seek within
-0.02 s — wider than a frame at 60 fps. Its `seeked` handlers are not keyed to a
-specific seek, so overlapping seeks resolve against each other. There is one
-`<video>` element per _media file_ rather than per _clip_, so two clips of the
-same source fight over `currentTime`. `playback-engine.ts` calls an async
-`renderFrame()` without awaiting it and immediately schedules the next frame,
-letting concurrent renders stomp shared GL state.
-
-**Two clocks fight.** The playhead advances by rAF wall-clock delta while
-`audio-manager.ts` separately calls `video.play()` and does its own drift
-correction at a 0.15 s threshold.
-
-**Media references are destroyed on reload.** `media-store.restoreMedia()` runs
-in `onMount` and calls `requestPermission()`, which the browser only allows
-inside a user gesture. It therefore always fails, and the failure path deletes
-the stored handle from IndexedDB permanently.
-
-**Undo has hand-written inverses that are wrong.** Split-undo is stubbed,
-trim-redo is empty, and delete-undo re-adds clips with fresh ids while dropping
-effects, in/out points, and transitions — so the paired redo, which removes by
-the old id, is a no-op.
+The document is the single source of truth; every mutation goes through
+`applyEdit` and is therefore both undoable and validated. UI preferences are
+Solid stores persisted to `localStorage`; the project itself autosaves to OPFS,
+which has no 5 MB ceiling to fail silently against.
 
 ---
 
 ## Design
 
-### Commands (built)
+### Commands
 
 `src/commands/` holds one registry of `{id, label, shortcut, enabled, run}`.
 Menus, toolbar buttons, and keyboard shortcuts all dispatch through it, so an
@@ -83,7 +55,7 @@ and on Linux CI.
 A disabled command still _swallows_ its shortcut, so Backspace with nothing
 selected doesn't fall through to browser back-navigation.
 
-### One render graph, two schedulers (planned)
+### One render graph, two schedulers
 
 Split rendering into three layers, with a hard rule: **the graph is synchronous
 and pure; all decoding resolves before it runs.**
@@ -110,9 +82,14 @@ Two schedulers consume it:
 
 This structurally removes the wall-clock export bug and the overlapping-render
 race: there is no wall clock in the export path and never more than one render
-outstanding.
+outstanding. The two schedulers differ in exactly one place — a `FrameLookup`
+hook on `renderFrame`. Scene building, compositing, effects and transitions are
+literally the same code, so the exported file cannot drift from the preview.
 
-### The clock: audio is master, unconditionally (planned)
+**Not built:** the quality ladder. Preview renders at full sequence resolution
+however long a frame takes.
+
+### The clock: audio is master, unconditionally
 
 ```
 playing: now() = anchorSec + (audioCtx.currentTime - anchorCtxTime) × rate
@@ -127,7 +104,7 @@ unconditional removes the branch and the entire two-clocks class of bug.
 `snapToFrame(now())`. Frame stepping is integer arithmetic on a frame index,
 never repeated float addition of `1/fps`.
 
-### Media engine: decode per clip instance (planned)
+### Media engine: decode per clip instance
 
 The unit of decode is a clip on the timeline, not a file on disk. Two clips of
 one source get two decoders and never interfere.
@@ -143,14 +120,18 @@ Three request modes: an awaiting exact fetch (export), a synchronous
 never-blocking fetch (preview), and a sync-samples-only fetch for scrubbing that
 upgrades to exact after the drag settles.
 
-Frame lifetime is refcounted and _measured_: a dev counter tracks
-`framesCreated - framesClosed`, surfaced in a debug HUD and asserted at teardown
-in every browser-mode test. Hoping for `.close()` discipline does not work.
+Frame lifetime is refcounted and _measured_: `openFrameCount()` tracks
+`framesCreated - framesClosed` and is asserted in browser tests. Hoping for
+`.close()` discipline does not work. Note what the counter means — a _cached_
+frame is legitimately open, so zero is only expected once whatever owns the
+cache has been disposed. Export therefore owns its own decoder pool, which also
+stops a long export evicting the frames the editor is showing.
 
 The engine facade is async from the start specifically so it can move into a
-worker by swapping transport rather than rewriting call sites.
+worker by swapping transport rather than rewriting call sites. **Not built:**
+that move. No worker exists yet.
 
-### Audio engine (planned)
+### Audio engine
 
 Per voice: `AudioBufferSourceNode` → clip gain → clip pan → track gain → track
 pan → master → destination + analyser.
@@ -162,13 +143,17 @@ construction — there is no per-frame audio sync step at all.**
 Offline export builds voices with the _same_ function, passed an
 `OfflineAudioContext`. One code path means preview and export cannot diverge.
 
-The auto-created duplicate audio clip goes away, replaced by a `linkedAudio`
-flag on the video clip plus a real "Detach Audio" command. That duplicate is
-why export currently mixes every video's audio twice at 2× amplitude.
+The auto-created duplicate audio clip is gone, replaced by a `linkedAudio` flag
+on the video clip. That duplicate was why export mixed every video's audio
+twice, at 2× amplitude.
 
-### Timeline geometry (planned)
+Speed changes resample, so a retimed clip is pitched. **Not built:** a
+time-stretcher. `AudioBufferSourceNode` has no `preservesPitch`, and the UI
+says the audio is pitched rather than offering a toggle that does nothing.
 
-Replace percentage-of-duration with pixels-per-second plus a scroll offset:
+### Timeline geometry
+
+Pixels-per-second plus a scroll offset, replacing percentage-of-duration:
 
 ```
 timeToX(t) = t * pxPerSecond - scrollLeftPx
@@ -188,7 +173,19 @@ Culling (a memo over the visible time range per track) rather than
 virtualization: at this scale it holds 60 fps without the interaction pain of
 dragging across a virtualized boundary.
 
-### Project document and undo (built)
+Two coordinate spaces, kept distinct on purpose and easy to confuse: content x
+is measured inside the scrolling strip and is what clips and ruler ticks are
+positioned in; viewport x is measured against the panel. The sticky track
+headers mean content x = 0 is a header-width to the right of the strip's left
+edge, which is worth remembering before doing arithmetic on a pointer event.
+
+**Not built:** the decoration generators. `lib/media-previews.ts` — the
+concurrency-limited job queue that requests them — is real, but the waveform
+and thumbnail generators it calls are pre-rewrite originals: a fixed 200 peaks
+per file however long it is, and a `<video>` element per media file. Neither
+the mip pyramid nor the Mediabunny filmstrip exists. See `plan.md`.
+
+### Project document and undo
 
 **All times become integer frames.** Float seconds are derived. This removes a
 whole class of gap, overlap, and snap bugs and makes split and trim exact. Frame
@@ -207,7 +204,7 @@ project file is portable. Nothing is ever deleted implicitly: a lapsed
 permission produces a "Reconnect media" banner whose click performs the
 re-grant, never a silent handle deletion.
 
-### Effects and pipeline order (planned)
+### Effects and pipeline order
 
 Per layer, in this order:
 
@@ -215,16 +212,19 @@ Per layer, in this order:
 2. **Crop** — in source UV space, folded into the upload pass
 3. **Effects** — ping-pong FBOs, cleared at the start of each pass; spatial
    radii expressed as a fraction of height so half-res preview matches full-res
-   export
+   export. Separable kernels run twice, with the pipeline supplying the
+   direction rather than the user
 4. **Transform + fit** — one quad draw with a matrix composing fit mode, anchor,
    scale, rotation, position. After effects, so effects see undistorted pixels
    and rotation isn't double-filtered
 5. **Opacity + blend** — composited with the evaluated opacity
 
-**Y-flip, canonically:** all textures are stored bottom-up in GL convention, and
-a flip happens exactly twice — once at source upload, once at the final blit.
-The current code bakes flips into multiple vertex shaders, which cancels out
-with one video track and inverts alternating layers with two or more.
+**Y-flip, canonically:** exactly one flip, at texture upload, via
+`UNPACK_FLIP_Y_WEBGL`. The original design here called for flipping twice and
+cancelling out; one flip in one place proved simpler to reason about and easier
+to test, and the compositor test pins a single orientation. The code this
+replaced baked flips into several vertex shaders, which cancelled out with one
+video track and inverted alternating layers with two or more.
 
 **Blending** is disabled globally; all compositing is explicit in-shader with
 premultiplied alpha. Never fixed-function blend on top of hand-written
@@ -234,18 +234,25 @@ alpha-over math.
 the scene builder can emit an operation with two fully-rendered sub-graphs and a
 progress value.
 
-**Titles** rasterize to an offscreen canvas keyed by their content hash, then
-enter the graph as ordinary layers — inheriting transform, opacity, effects and
-keyframes for free.
+**Titles and captions** rasterize to an offscreen canvas keyed by their content,
+then enter the graph as ordinary layers — inheriting transform, opacity,
+effects and keyframes for free. Captions are added last, over everything
+including a transition, and are burned in rather than overlaid so the preview
+shows exactly what the exported file will contain.
 
-### Platform seam (built, web only)
+### Platform seam
 
 One `Platform` interface with a web implementation (File System Access, OPFS,
 IndexedDB) and a Tauri implementation, selected at build time.
 
-**The entire seam is `platform.fs.read(ref, range)`.** A byte-range source built
-on it lets the demuxer work identically on both targets. After the seam lands,
-no file outside the web implementation touches `FileSystemFileHandle`.
+**The seam is `platform.fs.read(ref, range)`**, plus `createWritable(ref)` for
+output. A byte-range source built on the first lets the demuxer work
+identically on both targets; the second returns _positioned_ chunks, because
+MP4 patches its header once the sizes are known and an append-only stream
+cannot express that. No file outside `src/platform/web/` touches
+`FileSystemFileHandle`.
+
+Only the web implementation exists. Tauri is Phase 7.
 
 `platform.transcode` is optional, which is what makes an ffmpeg fallback a clean
 add-on: the same "this file needs conversion" prompt lazy-loads wasm on web or
@@ -255,17 +262,37 @@ invokes a native sidecar on desktop, from one call site.
 
 ## Testing
 
-| Tier         | Covers                                                                                                                                                                                                                         |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Unit         | keyframe evaluation, timeline geometry round-trips and cursor-anchored zoom, timecode, chord parsing and dispatch                                                                                                              |
-| Property     | random sequences of split/trim/move/delete, asserting clips stay sorted and non-overlapping with valid in/out points; then undo everything and assert deep equality with the original                                          |
-| Golden frame | render a scene in real WebGL2, compare against a reference within tolerance. Layer stacking and Y orientation across 1/2/3 tracks is mandatory — that is exactly the bug that shipped. Plus a frame-leak assertion at teardown |
-| Determinism  | export a synthetic timeline, demux the result, assert exact frame count, exact presentation timestamps, and a burned-in frame counter matching                                                                                 |
-| E2E          | import → arrange → play → export, save/reload round-trip                                                                                                                                                                       |
+| Tier        | Covers                                                                                                                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit        | keyframe evaluation, timeline geometry round-trips and cursor-anchored zoom, timecode, subtitle and chapter formats, chord parsing and dispatch                                                     |
+| Property    | random sequences of split/trim/move/delete, asserting clips stay sorted and non-overlapping with valid in/out points; then undo everything and assert deep equality with the original               |
+| Render      | render in real WebGL2 and probe specific pixels — "transparent above the plate before the blur, lit after it". Layer stacking and Y orientation across multiple tracks, plus a frame-leak assertion |
+| Determinism | export a synthetic timeline, demux the result, assert exact frame count, exact presentation timestamps, and burned-in frame counters in order                                                       |
+| Component   | mount the real panel, dispatch real pointer and input events, assert on the document. Every UI bug this project has found was invisible without this                                                |
 
 Test media is **generated, not committed** — a fixture script encodes a short
 clip with a burned-in frame counter and a test tone, which makes frame-accuracy
-assertions trivial and keeps binaries out of git.
+assertions trivial and keeps binaries out of git. The counter is encoded as
+black-and-white blocks read by luma threshold, not as a colour: the fixtures
+are lossy 4:2:0 H.264, and exact channel values do not survive a round trip.
+
+Two things to know before writing a browser-mode test. **No stylesheet is
+loaded**, so Tailwind's `absolute` never applies and every element measures at
+the origin — assert on inline offsets, or on relative motion, not on rendered
+rectangles. And **the render target is the composite framebuffer**, not the
+canvas: the drawing buffer is created with `preserveDrawingBuffer: false` and
+is cleared as soon as the browser composites, so reading it from a later task
+returns black.
+
+The render tier deliberately does not diff against reference images. Probing
+named pixels states what is being checked and has no goldens to regenerate when
+an unrelated shader changes. (`pixelmatch` and `pngjs` are still declared as
+dependencies and used nowhere — see `plan.md`.)
+
+**Not built:** a standalone Playwright E2E suite. Playwright is present only as
+the driver for Vitest browser mode, which covers most of what the E2E tier was
+for by mounting real components. What it cannot cover is anything behind an OS
+dialog, such as importing through the file picker.
 
 CI runs typecheck, lint, format check, unit tests, and build on every push;
 browser-mode tests run in a separate job with Chromium. `no-floating-promises`
