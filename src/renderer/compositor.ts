@@ -20,14 +20,29 @@ import {
 import { rasteriseSolid, rasteriseText, rasteriseSubtitle } from "./text-renderer";
 import { mediaEngine, type BorrowedFrame } from "@/media/engine";
 import { doc as currentDoc } from "@/stores/project-store";
-import { clipAt, type Clip, type ProjectDoc } from "@/model/doc";
+import { type Clip, type ProjectDoc } from "@/model/doc";
 import { framesToSeconds, secondsToFrames } from "@/lib/timecode";
 
 export type Compositor = GraphContext;
 
-export function createCompositor(canvas: HTMLCanvasElement): Compositor | null {
+/**
+ * @param size Render at this size instead of the sequence's.
+ *
+ * The preview renders smaller than the project and the export sometimes
+ * renders larger, and both used to build the graph at the sequence size and
+ * immediately resize it — allocating a full set of 4K buffers to throw them
+ * away a moment later.
+ */
+export function createCompositor(
+  canvas: HTMLCanvasElement,
+  size?: { width: number; height: number },
+): Compositor | null {
   const sequence = currentDoc().sequence;
-  return createGraph(canvas, sequence.width, sequence.height);
+  return createGraph(
+    canvas,
+    size?.width ?? sequence.width,
+    size?.height ?? sequence.height,
+  );
 }
 
 export function resizeCompositor(
@@ -158,19 +173,54 @@ export function renderBlackFrame(comp: Compositor): void {
 }
 
 /**
+ * The clips a frame needs, from the scene rather than from the tracks.
+ *
+ * `clipAt` per track is not the same thing: mid-transition both sides are on
+ * screen, and one of them is being read from outside its own span. The scene
+ * already works that out, so asking it is both shorter and right.
+ */
+function clipsFor(document_: ProjectDoc, frame: number): Clip[] {
+  const seen = new Set<string>();
+  const clips: Clip[] = [];
+  for (const request of buildScene(document_, frame).requests) {
+    if (seen.has(request.clipId)) continue;
+    seen.add(request.clipId);
+    const clip = findClipById(document_, request.clipId);
+    if (clip) clips.push(clip);
+  }
+  return clips;
+}
+
+/**
  * Decodes ahead for the clips about to be needed, and drops decoders for those
  * that are not.
  */
 export function primeFrames(frame: number): void {
   const document_ = currentDoc();
-  const active: Clip[] = [];
-  for (const track of document_.tracks) {
-    if (track.kind !== "video") continue;
-    const clip = clipAt(track, frame);
-    if (clip) active.push(clip);
-  }
+  const active = clipsFor(document_, frame);
   mediaEngine.prefetch(document_, active, frame);
   mediaEngine.retain(active.map((c) => c.id));
+}
+
+/**
+ * Waits for everything a frame needs, so a paused preview can settle on it.
+ *
+ * The render pass never waits — that is what stops renders overlapping — so
+ * something has to. While playing, the prefetch running ahead covers it and a
+ * late frame is simply repeated. While *paused* there is no next frame to
+ * repeat into: without this the preview shows black until you start playing,
+ * which is what it did.
+ */
+export async function settleFrame(frame: number): Promise<void> {
+  const document_ = currentDoc();
+  const borrowed = await Promise.all(
+    clipsFor(document_, frame).map((clip) =>
+      mediaEngine.getExact(document_, clip, frame).catch(() => null),
+    ),
+  );
+  // Released immediately: this is only to get them into the cache, and the
+  // render pass borrows its own references.
+  for (const frameRef of borrowed) frameRef?.release();
 }
 
 /** The framebuffer holding the finished picture, for readback in tests. */

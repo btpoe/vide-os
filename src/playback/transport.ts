@@ -69,6 +69,18 @@ function restartAudio(): void {
   else audioEngine.stop();
 }
 
+/**
+ * Picks up wherever the playhead was left before starting.
+ *
+ * The timeline, the marker list, the caption list and the keyframe navigator
+ * all move the playhead through the store without going near the clock — so
+ * the clock's anchor is stale by the time anyone presses play, and playback
+ * would resume from whatever position it was last told about. Usually zero.
+ */
+function adoptPlayhead(): void {
+  if (clock.nowFrame() !== playheadFrame()) clock.seekFrame(playheadFrame());
+}
+
 /** Mirrors the clock's state into a signal so the UI can react to it. */
 function syncPlayingState(): void {
   setIsPlayingSignal(clock.isPlaying());
@@ -77,6 +89,10 @@ function syncPlayingState(): void {
 }
 
 export function togglePlayback(): void {
+  // Synchronously, before the audio context is awaited: the clock's position
+  // must not depend on how long a `resume()` takes to settle, or on whether it
+  // settles at all.
+  if (!clock.isPlaying()) adoptPlayhead();
   void ensureAudioContext().then(() => {
     clock.toggle();
     syncPlayingState();
@@ -84,6 +100,7 @@ export function togglePlayback(): void {
 }
 
 export function play(rate = 1): void {
+  adoptPlayhead();
   void ensureAudioContext().then(() => {
     clock.play(rate);
     syncPlayingState();
@@ -106,12 +123,14 @@ export function seekToFrame(frame: number): void {
 }
 
 export function stepFrames(delta: number): void {
+  adoptPlayhead();
   clock.stepFrames(delta);
   syncPlayingState();
   setPlayheadFrame(clock.nowFrame());
 }
 
 export function shuttle(direction: -1 | 1): void {
+  if (!clock.isPlaying()) adoptPlayhead();
   void ensureAudioContext().then(() => {
     clock.shuttle(direction);
     syncPlayingState();

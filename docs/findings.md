@@ -576,6 +576,54 @@ rewritten.
 
 ---
 
+## The preview panel
+
+### Found
+
+- **The preview was black until you pressed play.** The scheduler only called
+  `primeFrames` while playing, and the render pass uses `tryGet`, which never
+  waits. So nothing ever decoded the frame under a stationary playhead: drop a
+  clip on the timeline, look at the preview, see nothing. Every renderer test
+  missed it because they all warm the cache by awaiting `getExact` themselves
+  first — the one step the application does not do.
+- **The preview did not follow the playhead.** It rendered `clock.nowFrame()`,
+  but eight UI call sites — timeline scrub, marker list, caption list, keyframe
+  navigation, source-monitor edits — move the playhead through the _store_ and
+  never touch the clock. Scrubbing moved the playhead and left the picture
+  where it was.
+- **Playback restarted from wherever the clock was last anchored**, usually
+  frame 0. Scrub to the middle, press play, jump back to the start.
+- **The panel built its compositor at the sequence size and resized it after**,
+  so a 4K project allocated a full set of 4K render targets on mount and threw
+  them away a moment later.
+
+### Decided
+
+- **While paused, the store's playhead is the authority; while playing, the
+  clock is.** Audio stays master during playback, which is the whole point of
+  the clock, but a stationary playhead is wherever the UI put it.
+- **A paused frame settles asynchronously.** `settleFrame` awaits everything
+  the scene asks for and then marks the preview dirty. A token guards against a
+  slow decode landing after the playhead has moved on and marking a stale frame
+  ready — a scrub is a stream of positions, not one.
+- **The clock adopts the playhead synchronously**, before the audio context is
+  awaited. Doing it inside the `then` made the clock's position depend on
+  whether `resume()` ever settles; in a headless browser it does not, which is
+  how the test found it.
+- **Which clips a frame needs comes from the scene, not from `clipAt` per
+  track.** Mid-transition both sides are on screen and one is read from outside
+  its own span, which the per-track version missed.
+
+### Testing note
+
+Do not read the preview canvas. The drawing buffer is created with
+`preserveDrawingBuffer: false` and is cleared as soon as the browser
+composites, so reading it from a later task returns black whatever was drawn —
+these tests measured exactly that and "confirmed" a bug that was partly their
+own. Read the composite framebuffer, as the compositor tests already did.
+
+---
+
 ## Open items not yet scheduled
 
 - **Retime does not preserve pitch.** A slowed clip sounds lower. Web Audio

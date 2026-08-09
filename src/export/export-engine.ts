@@ -36,7 +36,6 @@ import {
   createCompositor,
   disposeCompositor,
   renderFrame,
-  resizeCompositor,
   currentAccumulator,
   type Compositor,
   type FrameLookup,
@@ -408,12 +407,7 @@ function createCompositorAt(
   width: number,
   height: number,
 ): Compositor | null {
-  const comp = createCompositor(canvas);
-  if (!comp) return null;
-  if (comp.width !== width || comp.height !== height) {
-    resizeCompositor(comp, width, height);
-  }
-  return comp;
+  return createCompositor(canvas, { width, height });
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

@@ -13,7 +13,12 @@
  */
 
 import { createEffect, onCleanup } from "solid-js";
-import { primeFrames, renderFrame, type Compositor } from "@/renderer/compositor";
+import {
+  primeFrames,
+  settleFrame,
+  renderFrame,
+  type Compositor,
+} from "@/renderer/compositor";
 import { doc, playheadFrame, setPlayheadFrame } from "@/stores/project-store";
 import { contentEndFrame } from "@/model/doc";
 import { clock, isPlaying } from "./transport";
@@ -33,13 +38,38 @@ export function startPreview(compositor: Compositor): PreviewScheduler {
   let lastRenderedFrame = -1;
   /** Bumped by the reactive effect below to force a redraw while paused. */
   let dirty = true;
+  /** The frame a settle is in flight for, so it is not started twice. */
+  let settlingFrame = -1;
+  let settleToken = 0;
+
+  /**
+   * Decodes what a paused frame needs, then asks for a redraw.
+   *
+   * The render pass never waits, and while paused there is no next frame to
+   * repeat into — so without this the preview stayed black until playback
+   * started. The token guards against a slow decode landing after the playhead
+   * has moved on and marking a stale frame ready.
+   */
+  const settle = (frame: number) => {
+    if (settlingFrame === frame) return;
+    settlingFrame = frame;
+    const token = ++settleToken;
+
+    void settleFrame(frame).then(() => {
+      if (stopped || token !== settleToken) return;
+      dirty = true;
+    });
+  };
 
   const loop = () => {
     if (stopped) return;
     rafId = requestAnimationFrame(loop);
 
     const playing = clock.isPlaying();
-    const frame = clock.nowFrame();
+    // While playing the clock is the authority; while paused the playhead is,
+    // because the timeline, the marker list and the caption list all move it
+    // directly and none of them goes through the transport.
+    const frame = playing ? clock.nowFrame() : playheadFrame();
 
     if (playing) {
       // Stop at the end of the content rather than running into empty space.
@@ -52,8 +82,10 @@ export function startPreview(compositor: Compositor): PreviewScheduler {
         return;
       }
       setPlayheadFrame(frame);
-      primeFrames(frame);
     }
+
+    primeFrames(frame);
+    if (!playing) settle(frame);
 
     // Nothing to do if the picture cannot have changed.
     if (!dirty && frame === lastRenderedFrame) return;
@@ -74,6 +106,10 @@ export function startPreview(compositor: Compositor): PreviewScheduler {
     playheadFrame();
     isPlaying();
     dirty = true;
+    // An edit can change what a frame is made of without moving the playhead —
+    // adding a clip, unmuting a track — so the settle has to run again for a
+    // frame it has already run for.
+    settlingFrame = -1;
   });
 
   const stop = () => {
@@ -88,5 +124,5 @@ export function startPreview(compositor: Compositor): PreviewScheduler {
 
 /** Forces a redraw — call after a resize, which the loop cannot observe. */
 export function invalidatePreview(compositor: Compositor): void {
-  renderFrame(compositor, clock.nowFrame());
+  renderFrame(compositor, clock.isPlaying() ? clock.nowFrame() : playheadFrame());
 }

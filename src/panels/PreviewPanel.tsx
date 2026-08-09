@@ -1,4 +1,4 @@
-import { Component, onMount, onCleanup, createSignal } from "solid-js";
+import { Component, onMount, onCleanup, createEffect, createSignal } from "solid-js";
 import { doc, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
 import { contentEndFrame } from "@/model/doc";
 import { framesToTimecode } from "@/lib/timecode";
@@ -34,14 +34,32 @@ const PreviewPanel: Component = () => {
   let scheduler: { stop: () => void } | null = null;
   const [glReady, setGlReady] = createSignal(false);
 
+  /**
+   * The size the preview renders at.
+   *
+   * A fraction of the project, and derived from the *sequence* rather than
+   * from the element: the canvas is scaled to fit by CSS, so making the buffer
+   * track the panel would re-allocate every render target on every drag of a
+   * splitter for no gain in what you can see.
+   */
+  const previewSize = () => {
+    const sequence = doc().sequence;
+    return {
+      width: Math.max(2, Math.round(sequence.width * PREVIEW_SCALE)),
+      height: Math.max(2, Math.round(sequence.height * PREVIEW_SCALE)),
+    };
+  };
+
   onMount(() => {
     if (!canvasRef) return;
 
-    const sequence = doc().sequence;
-    canvasRef.width = Math.round(sequence.width * PREVIEW_SCALE);
-    canvasRef.height = Math.round(sequence.height * PREVIEW_SCALE);
+    const { width, height } = previewSize();
+    canvasRef.width = width;
+    canvasRef.height = height;
 
-    compositor = createCompositor(canvasRef);
+    // At the preview size, not the sequence size: building it full-size and
+    // resizing afterwards allocated a whole set of 4K buffers to discard.
+    compositor = createCompositor(canvasRef, { width, height });
     if (!compositor) {
       console.warn("WebGL2 compositor failed to initialize");
       return;
@@ -51,22 +69,24 @@ const PreviewPanel: Component = () => {
     renderBlackFrame(compositor);
     scheduler = startPreview(compositor);
 
-    // The canvas is fixed at a fraction of the project resolution, but the
-    // element it sits in is not — a resize needs a redraw, which the render
-    // loop cannot observe on its own. `resizeCompositor` existed before and
-    // was never called from anywhere.
+    // Opening a project of a different resolution changes what the preview
+    // should render at. The render loop cannot observe that on its own.
+    createEffect(() => {
+      const next = previewSize();
+      if (!compositor || !canvasRef) return;
+      if (compositor.width === next.width && compositor.height === next.height) return;
+
+      canvasRef.width = next.width;
+      canvasRef.height = next.height;
+      resizeCompositor(compositor, next.width, next.height);
+      invalidatePreview(compositor);
+    });
+
+    // A CSS resize keeps the buffer but can drop what was presented, so the
+    // picture has to be drawn again.
     if (containerRef) {
       const observer = new ResizeObserver(() => {
-        if (!compositor) return;
-        const next = doc().sequence;
-        const width = Math.round(next.width * PREVIEW_SCALE);
-        const height = Math.round(next.height * PREVIEW_SCALE);
-        if (compositor.width !== width || compositor.height !== height) {
-          canvasRef.width = width;
-          canvasRef.height = height;
-          resizeCompositor(compositor, width, height);
-        }
-        invalidatePreview(compositor);
+        if (compositor) invalidatePreview(compositor);
       });
       observer.observe(containerRef);
       onCleanup(() => observer.disconnect());
