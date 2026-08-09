@@ -31,6 +31,7 @@ import {
 } from "./doc";
 import { newId } from "./ids";
 import { EASING_PRESETS, type Keyframe } from "@/lib/animation";
+import { defaultSubtitleStyle } from "./subtitles";
 import { frameRateFromNumber, secondsToFrames, type FrameRate } from "@/lib/timecode";
 
 // ── v1 shapes ─────────────────────────────────────────────────────────
@@ -200,6 +201,7 @@ function migrateV1(raw: V1Doc): MigrationResult {
 
   const doc = createEmptyDoc(raw.name ?? "Untitled Project");
   doc.sequence = {
+    ...doc.sequence,
     frameRate: rate,
     width: raw.width ?? 1920,
     height: raw.height ?? 1080,
@@ -323,8 +325,30 @@ function migrateV1(raw: V1Doc): MigrationResult {
     warnings.push(`Frame rate ${raw.fps} was interpreted as ${rate.num}/${rate.den}.`);
   }
 
-  doc.formatVersion = 3;
+  doc.formatVersion = DOC_FORMAT_VERSION;
   return { doc, warnings };
+}
+
+/**
+ * v3 → v4: subtitles.
+ *
+ * Additive, so nothing is lost and there is nothing to warn about. It still
+ * has to happen rather than being waved through as "current": a v3 document
+ * has no `subtitles` array, and every reader would have to guard for that
+ * forever otherwise.
+ */
+function migrateV3(raw: ProjectDoc): MigrationResult {
+  const doc: ProjectDoc = {
+    ...raw,
+    formatVersion: DOC_FORMAT_VERSION,
+    sequence: {
+      ...raw.sequence,
+      subtitleStyle: raw.sequence.subtitleStyle ?? defaultSubtitleStyle(),
+      burnInSubtitles: raw.sequence.burnInSubtitles ?? true,
+    },
+    subtitles: raw.subtitles ?? [],
+  };
+  return { doc, warnings: [] };
 }
 
 // ── Entry point ───────────────────────────────────────────────────────
@@ -361,6 +385,9 @@ export function migrate(raw: unknown): MigrationResult {
 
   if (version === DOC_FORMAT_VERSION) {
     return { doc: raw as ProjectDoc, warnings: [] };
+  }
+  if (version === 3) {
+    return migrateV3(raw as ProjectDoc);
   }
   if (version === 1 || version === 2) {
     return migrateV1(raw as V1Doc);

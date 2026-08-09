@@ -19,9 +19,10 @@
 
 import type { FrameRate } from "@/lib/timecode";
 import type { Animatable } from "@/lib/animation";
+import type { SubtitleCue, SubtitleStyle } from "./subtitles";
 import type { ContentKey } from "./ids";
 
-export const DOC_FORMAT_VERSION = 3;
+export const DOC_FORMAT_VERSION = 4;
 
 // ── Assets ────────────────────────────────────────────────────────────
 
@@ -197,6 +198,10 @@ export interface Sequence {
   width: number;
   height: number;
   sampleRate: number;
+  /** One style for every caption, as in every player. */
+  subtitleStyle: SubtitleStyle;
+  /** Whether captions are drawn into the picture, in preview and in export. */
+  burnInSubtitles: boolean;
 }
 
 export interface ProjectDoc {
@@ -206,6 +211,15 @@ export interface ProjectDoc {
   assets: Asset[];
   tracks: Track[];
   markers: Marker[];
+  /**
+   * Captions, kept sorted by start frame.
+   *
+   * A list rather than clips on a track: a caption has no in-point, no speed
+   * and nothing to trim against, and importing an hour of dialogue would
+   * otherwise mint two thousand clips each carrying a transform, a crop and an
+   * effects chain it will never use.
+   */
+  subtitles: SubtitleCue[];
 }
 
 // ── Constructors ──────────────────────────────────────────────────────
@@ -213,6 +227,7 @@ export interface ProjectDoc {
 import { newId } from "./ids";
 import { FPS_30 } from "@/lib/timecode";
 import { constant } from "@/lib/animation";
+import { defaultSubtitleStyle } from "./subtitles";
 
 export function defaultTransform(): Transform {
   return {
@@ -371,6 +386,8 @@ export function createEmptyDoc(name = "Untitled Project"): ProjectDoc {
       width: 1920,
       height: 1080,
       sampleRate: 48000,
+      subtitleStyle: defaultSubtitleStyle(),
+      burnInSubtitles: true,
     },
     assets: [],
     tracks: [
@@ -380,6 +397,7 @@ export function createEmptyDoc(name = "Untitled Project"): ProjectDoc {
       createTrack("audio", "Audio 2"),
     ],
     markers: [],
+    subtitles: [],
   };
 }
 

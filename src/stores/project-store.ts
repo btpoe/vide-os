@@ -32,6 +32,7 @@ import {
   clipEndFrame,
   findClip,
 } from "@/model/doc";
+import { cueAt, type SubtitleCue, type SubtitleStyle } from "@/model/subtitles";
 import * as edits from "@/model/edits";
 import {
   type HistoryState,
@@ -508,6 +509,71 @@ export function removeClipTransition(trackId: string, clipId: string): void {
     },
     { icon: "🔀" },
   );
+}
+
+// ── Subtitles ─────────────────────────────────────────────────────────
+
+/** Adds a cue at the playhead, defaulting to two seconds. */
+export function addCueAtPlayhead(text = ""): string {
+  let created = "";
+  const length = secondsToFrames(2, rate());
+  applyEdit(
+    "Add caption",
+    (d) => {
+      created = edits.addCue(d, playheadFrame(), playheadFrame() + length, text).id;
+    },
+    { icon: "💬" },
+  );
+  return created;
+}
+
+export function removeCue(cueId: string): void {
+  applyEdit("Delete caption", (d) => edits.removeCue(d, cueId), { icon: "💬" });
+}
+
+export function updateCue(
+  cueId: string,
+  patch: Partial<Omit<SubtitleCue, "id">>,
+): void {
+  applyEdit("Edit caption", (d) => edits.updateCue(d, cueId, patch), {
+    icon: "💬",
+    // Typing a caption is one history entry, not one per letter.
+    coalesceKey: `cue:${cueId}`,
+  });
+}
+
+export function splitCueAtPlayhead(cueId: string): void {
+  applyEdit("Split caption", (d) => edits.splitCue(d, cueId, playheadFrame()), {
+    icon: "✂",
+  });
+}
+
+/** Replaces every cue. Used by import, which is all-or-nothing. */
+export function replaceCues(
+  cues: readonly SubtitleCue[],
+  label = "Import captions",
+): void {
+  applyEdit(label, (d) => edits.setCues(d, cues), { icon: "💬" });
+}
+
+export function setSubtitleStyle(patch: Partial<SubtitleStyle>): void {
+  applyEdit("Caption style", (d) => edits.setSubtitleStyle(d, patch), {
+    icon: "💬",
+    coalesceKey: "subtitle-style",
+  });
+}
+
+export function setBurnInSubtitles(burnIn: boolean): void {
+  applyEdit(
+    burnIn ? "Burn in captions" : "Hide captions",
+    (d) => edits.setBurnInSubtitles(d, burnIn),
+    { icon: "💬" },
+  );
+}
+
+/** The cue under the playhead, if any. */
+export function currentCue(): SubtitleCue | null {
+  return cueAt(doc().subtitles, playheadFrame());
 }
 
 // ── Markers ───────────────────────────────────────────────────────────

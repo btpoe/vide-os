@@ -6,6 +6,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  Show,
 } from "solid-js";
 import {
   doc,
@@ -35,6 +36,7 @@ import TrackHeader, { TRACK_HEADER_WIDTH_PX } from "./timeline/TrackHeader";
 import TrackLane from "./timeline/TrackLane";
 import TimelineOverlay from "./timeline/TimelineOverlay";
 import MarkerLane, { MARKER_LANE_HEIGHT_PX } from "./timeline/MarkerLane";
+import SubtitleLane, { SUBTITLE_LANE_HEIGHT_PX } from "./timeline/SubtitleLane";
 import { frameFromEvent } from "./timeline/interactions";
 
 /**
@@ -234,6 +236,25 @@ const TimelinePanel: Component = () => {
             </div>
           </div>
 
+          {/* Captions belong to the sequence too, so they sit beside the
+              markers rather than on a track. Only shown when there are any. */}
+          <Show when={doc().subtitles.length > 0}>
+            <div class="flex">
+              <div
+                class="sticky left-0 z-20 shrink-0 border-b border-r border-border bg-panel-header flex items-center px-1.5 text-[9px] text-muted-foreground"
+                style={{
+                  width: `${TRACK_HEADER_WIDTH_PX}px`,
+                  height: `${SUBTITLE_LANE_HEIGHT_PX}px`,
+                }}
+              >
+                Captions
+              </div>
+              <div class="relative" style={{ width: `${stripWidth()}px` }}>
+                <SubtitleLane />
+              </div>
+            </div>
+          </Show>
+
           <For each={tracks()}>
             {(track) => (
               <div class="flex">
@@ -266,7 +287,12 @@ const TimelinePanel: Component = () => {
             style={{ left: `${TRACK_HEADER_WIDTH_PX}px`, width: `${stripWidth()}px` }}
           >
             <TimelineOverlay
-              heightPx={RULER_HEIGHT_PX + MARKER_LANE_HEIGHT_PX + bodyHeight()}
+              heightPx={
+                RULER_HEIGHT_PX +
+                MARKER_LANE_HEIGHT_PX +
+                (doc().subtitles.length > 0 ? SUBTITLE_LANE_HEIGHT_PX : 0) +
+                bodyHeight()
+              }
             />
           </div>
         </div>

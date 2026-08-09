@@ -50,6 +50,7 @@ import ToolsPanel from "./panels/ToolsPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import PropertiesPanel from "./panels/properties/PropertiesPanel";
 import MarkersPanel from "./panels/MarkersPanel";
+import CaptionsPanel from "./panels/CaptionsPanel";
 import RecoveryDialog from "./panels/RecoveryDialog";
 import {
   recoveryOffer,
@@ -155,6 +156,14 @@ const builtInPanels: PanelDefinition[] = [
     category: "utility",
     component: () => createPanelElement("Markers", MarkersPanel),
     defaultPosition: { area: "right", order: 4 },
+  },
+  {
+    id: "captions",
+    name: "Captions",
+    icon: "💬",
+    category: "utility",
+    component: () => createPanelElement("Captions", CaptionsPanel),
+    defaultPosition: { area: "right", order: 5 },
   },
   {
     id: "history",

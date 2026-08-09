@@ -10,7 +10,12 @@ import {
   projectFileName,
 } from "@/model/io";
 import { migrate, detectVersion, UnsupportedProjectError } from "@/model/migrate";
-import { createEmptyDoc, type ProjectDoc, type Asset } from "@/model/doc";
+import {
+  createEmptyDoc,
+  DOC_FORMAT_VERSION,
+  type ProjectDoc,
+  type Asset,
+} from "@/model/doc";
 import { validateDoc } from "@/model/invariants";
 import * as edits from "@/model/edits";
 import { FPS_29_97, FPS_30 } from "@/lib/timecode";
@@ -135,7 +140,7 @@ describe("rejecting bad input", () => {
 
 describe("version detection", () => {
   it("recognises the current format", () => {
-    expect(detectVersion(sampleDoc())).toBe(3);
+    expect(detectVersion(sampleDoc())).toBe(DOC_FORMAT_VERSION);
   });
 
   it("treats a versionless file with tracks as v1", () => {
@@ -234,7 +239,7 @@ describe("v1 migration", () => {
   it("produces a valid document", () => {
     const { doc } = migrate(V1_FIXTURE);
     expect(validateDoc(doc)).toEqual([]);
-    expect(doc.formatVersion).toBe(3);
+    expect(doc.formatVersion).toBe(DOC_FORMAT_VERSION);
   });
 
   it("recovers 29.97 as a rational rate rather than a decimal", () => {
@@ -410,5 +415,38 @@ describe("file naming", () => {
   it("falls back for an empty name", () => {
     expect(projectFileName("")).toBe("Untitled Project.videos");
     expect(projectFileName("///")).toBe("Untitled Project.videos");
+  });
+});
+
+describe("v3 migration", () => {
+  /** A v3 document: everything the current one has, minus subtitles. */
+  function v3Doc(): Record<string, unknown> {
+    const current = createEmptyDoc("From v3") as unknown as Record<string, unknown>;
+    const sequence = { ...(current.sequence as Record<string, unknown>) };
+    delete sequence.subtitleStyle;
+    delete sequence.burnInSubtitles;
+    return { ...current, formatVersion: 3, sequence, subtitles: undefined };
+  }
+
+  it("adds the subtitle fields rather than leaving them undefined", () => {
+    // Waving a v3 document through as "current" would leave every reader
+    // guarding for a missing array forever.
+    const { doc } = migrate(v3Doc());
+
+    expect(doc.formatVersion).toBe(DOC_FORMAT_VERSION);
+    expect(doc.subtitles).toEqual([]);
+    expect(doc.sequence.subtitleStyle).toBeDefined();
+    expect(doc.sequence.burnInSubtitles).toBe(true);
+  });
+
+  it("has nothing to warn about, being purely additive", () => {
+    expect(migrate(v3Doc()).warnings).toEqual([]);
+  });
+
+  it("keeps everything else untouched", () => {
+    const before = v3Doc();
+    const { doc } = migrate(before);
+    expect(doc.name).toBe("From v3");
+    expect(doc.tracks).toHaveLength((before.tracks as unknown[]).length);
   });
 });

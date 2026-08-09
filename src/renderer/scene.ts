@@ -25,6 +25,7 @@ import {
   sourceFrameAt,
 } from "@/model/doc";
 import { evaluate } from "@/lib/animation";
+import { cueAt, type SubtitleCue, type SubtitleStyle } from "@/model/subtitles";
 import type { ContentKey } from "@/model/ids";
 
 // ── Scene shape ───────────────────────────────────────────────────────
@@ -57,7 +58,8 @@ export interface EvaluatedEffect {
 export type LayerSource =
   | { type: "asset"; assetId: ContentKey; sourceFrame: number }
   | { type: "text"; style: TextStyle }
-  | { type: "solid"; color: string };
+  | { type: "solid"; color: string }
+  | { type: "subtitle"; text: string; style: SubtitleStyle };
 
 export interface Layer {
   clipId: string;
@@ -262,12 +264,53 @@ export function buildScene(doc: ProjectDoc, frame: number): Scene {
     addRequest(layer);
   }
 
+  // Captions go on last, so they sit over everything including a transition.
+  // Burned in rather than drawn as an overlay so the preview shows exactly
+  // what the exported file will contain.
+  if (doc.sequence.burnInSubtitles) {
+    const cue = cueAt(doc.subtitles, frame);
+    if (cue && cue.text.trim().length > 0) {
+      nodes.push({
+        kind: "layer",
+        layer: subtitleLayer(cue, doc.sequence.subtitleStyle),
+      });
+    }
+  }
+
   return {
     frame,
     width: doc.sequence.width,
     height: doc.sequence.height,
     nodes,
     requests,
+  };
+}
+
+/**
+ * A caption as an ordinary layer.
+ *
+ * Untransformed and fully opaque: position is part of the subtitle style, not
+ * of a transform nobody can reach, and a half-faded caption is never what
+ * anyone wants.
+ */
+function subtitleLayer(cue: SubtitleCue, style: SubtitleStyle): Layer {
+  return {
+    clipId: `subtitle:${cue.id}`,
+    source: { type: "subtitle", text: cue.text, style },
+    transform: {
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      anchorX: 0.5,
+      anchorY: 0.5,
+    },
+    crop: { left: 0, right: 0, top: 0, bottom: 0 },
+    fit: "fill",
+    opacity: 1,
+    blend: "normal",
+    effects: [],
   };
 }
 

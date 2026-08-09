@@ -17,7 +17,7 @@ import {
   type GraphContext,
   type LayerImage,
 } from "./graph";
-import { rasteriseSolid, rasteriseText } from "./text-renderer";
+import { rasteriseSolid, rasteriseText, rasteriseSubtitle } from "./text-renderer";
 import { mediaEngine, type BorrowedFrame } from "@/media/engine";
 import { doc as currentDoc } from "@/stores/project-store";
 import { clipAt, type Clip, type ProjectDoc } from "@/model/doc";
@@ -86,6 +86,10 @@ function makeResolver(
   return (layer: Layer): LayerImage | null => {
     if (layer.source.type === "text") {
       const raster = rasteriseText(layer.source.style, scene.width, scene.height);
+      return { image: raster.canvas, width: raster.width, height: raster.height };
+    }
+    if (layer.source.type === "subtitle") {
+      const raster = rasteriseSubtitle(layer.source, scene.width, scene.height);
       return { image: raster.canvas, width: raster.width, height: raster.height };
     }
     if (layer.source.type === "solid") {

@@ -29,6 +29,7 @@ import {
   assetDurationFrames,
 } from "./doc";
 import { newId } from "./ids";
+import type { SubtitleCue, SubtitleStyle } from "./subtitles";
 import { evaluate, type Animatable, type Interp } from "@/lib/animation";
 
 /** Shortest clip the timeline will produce. One frame is still editable. */
@@ -1128,6 +1129,99 @@ export function updateMarker(
     marker.frame = Math.max(0, Math.round(patch.frame));
     doc.markers.sort((a, b) => a.frame - b.frame);
   }
+}
+
+// ── Subtitles ─────────────────────────────────────────────────────────
+
+function sortCues(doc: Draft): void {
+  doc.subtitles.sort((a, b) => a.startFrame - b.startFrame);
+}
+
+export function addCue(
+  doc: Draft,
+  startFrame: number,
+  endFrame: number,
+  text = "",
+): SubtitleCue {
+  const start = Math.max(0, Math.round(startFrame));
+  const cue: SubtitleCue = {
+    id: newId("cue"),
+    startFrame: start,
+    // At least one frame, or it is a caption that can never be on screen.
+    endFrame: Math.max(start + 1, Math.round(endFrame)),
+    text,
+  };
+  doc.subtitles.push(cue);
+  sortCues(doc);
+  return cue;
+}
+
+export function removeCue(doc: Draft, cueId: string): void {
+  doc.subtitles = doc.subtitles.filter((c) => c.id !== cueId);
+}
+
+export function updateCue(
+  doc: Draft,
+  cueId: string,
+  patch: Partial<Omit<SubtitleCue, "id">>,
+): void {
+  const cue = doc.subtitles.find((c) => c.id === cueId);
+  if (!cue) return;
+
+  if (patch.text !== undefined) cue.text = patch.text;
+  if (patch.startFrame !== undefined)
+    cue.startFrame = Math.max(0, Math.round(patch.startFrame));
+  if (patch.endFrame !== undefined) cue.endFrame = Math.round(patch.endFrame);
+
+  // Dragging either edge past the other would otherwise invert the cue.
+  if (cue.endFrame <= cue.startFrame) {
+    if (patch.startFrame !== undefined) cue.startFrame = cue.endFrame - 1;
+    else cue.endFrame = cue.startFrame + 1;
+  }
+  cue.startFrame = Math.max(0, cue.startFrame);
+  sortCues(doc);
+}
+
+/** Replaces every cue, as an import does. */
+export function setCues(doc: Draft, cues: readonly SubtitleCue[]): void {
+  doc.subtitles = [...cues].sort((a, b) => a.startFrame - b.startFrame);
+}
+
+/**
+ * Splits a cue at a frame, giving the first half the text.
+ *
+ * The usual reason is a caption that outstays its shot; moving the text by
+ * hand afterwards is easier than guessing where the sentence divides.
+ */
+export function splitCue(
+  doc: Draft,
+  cueId: string,
+  atFrame: number,
+): SubtitleCue | undefined {
+  const cue = doc.subtitles.find((c) => c.id === cueId);
+  if (!cue) return undefined;
+
+  const at = Math.round(atFrame);
+  if (at <= cue.startFrame || at >= cue.endFrame) return undefined;
+
+  const tail: SubtitleCue = {
+    id: newId("cue"),
+    startFrame: at,
+    endFrame: cue.endFrame,
+    text: "",
+  };
+  cue.endFrame = at;
+  doc.subtitles.push(tail);
+  sortCues(doc);
+  return tail;
+}
+
+export function setSubtitleStyle(doc: Draft, patch: Partial<SubtitleStyle>): void {
+  Object.assign(doc.sequence.subtitleStyle, patch);
+}
+
+export function setBurnInSubtitles(doc: Draft, burnIn: boolean): void {
+  doc.sequence.burnInSubtitles = burnIn;
 }
 
 // ── Sequence ──────────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import { resetLeakCounters } from "@/media/frame-cache";
 import { clearTextCache } from "@/renderer/text-renderer";
 import { loadDocument, doc, applyEdit } from "@/stores/project-store";
 import { createEmptyDoc, type ProjectDoc } from "@/model/doc";
+import { buildScene } from "@/renderer/scene";
 import * as edits from "@/model/edits";
 import { FPS_30 } from "@/lib/timecode";
 import { makeTestVideo } from "../fixtures/make-media";
@@ -509,5 +510,115 @@ describe("effects", () => {
     // And the key must actually have removed something.
     expect(first).toBeLessThan(250);
     disposeCompositor(comp);
+  });
+});
+
+describe("burned-in captions", () => {
+  /** A full-frame solid, so a caption over it is unambiguous. */
+  function solidDoc(d: ProjectDoc) {
+    const track = videoTrack(d);
+    edits.insertClip(d, track.id, { type: "solid", color: "#202020" }, FRAMES, {
+      startFrame: 0,
+      mode: "overwrite",
+    });
+  }
+
+  it("draws the cue that covers the frame", async () => {
+    // Burned in rather than overlaid, so the preview shows what the exported
+    // file will contain.
+    await setUp((d) => {
+      solidDoc(d);
+      edits.addCue(d, 0, 20, "HELLO");
+    });
+
+    const comp = createCompositor(canvas())!;
+    renderFrame(comp, 10);
+    const withCaption = readback(comp).meanLuma();
+
+    renderFrame(comp, 30);
+    const without = readback(comp).meanLuma();
+
+    // The caption is white on a dark plate over a dark field; either way the
+    // frame it is on must differ from the frame it is not.
+    expect(Math.abs(withCaption - without)).toBeGreaterThan(0.5);
+    disposeCompositor(comp);
+  });
+
+  it("draws nothing outside the cue", async () => {
+    await setUp((d) => {
+      solidDoc(d);
+      edits.addCue(d, 0, 20, "HELLO");
+    });
+
+    const comp = createCompositor(canvas())!;
+    renderFrame(comp, 30);
+    const plain = readback(comp).meanLuma();
+
+    renderFrame(comp, 19);
+    const last = readback(comp).meanLuma();
+    renderFrame(comp, 20);
+    const past = readback(comp).meanLuma();
+
+    // The end frame is exclusive, like every other span in the document.
+    expect(past).toBeCloseTo(plain, 1);
+    expect(Math.abs(last - plain)).toBeGreaterThan(0.5);
+    disposeCompositor(comp);
+  });
+
+  it("draws nothing when burn-in is off", async () => {
+    await setUp((d) => {
+      solidDoc(d);
+      edits.addCue(d, 0, 20, "HELLO");
+      edits.setBurnInSubtitles(d, false);
+    });
+
+    const comp = createCompositor(canvas())!;
+    renderFrame(comp, 10);
+    const off = readback(comp).meanLuma();
+
+    applyEdit("on", (d) => edits.setBurnInSubtitles(d, true));
+    renderFrame(comp, 10);
+    const on = readback(comp).meanLuma();
+
+    expect(Math.abs(on - off)).toBeGreaterThan(0.5);
+    disposeCompositor(comp);
+  });
+
+  it("puts the caption low in the frame, where the style says", async () => {
+    await setUp((d) => {
+      solidDoc(d);
+      edits.addCue(d, 0, 20, "HELLO");
+    });
+
+    const comp = createCompositor(canvas())!;
+    renderFrame(comp, 10);
+    const pixels = readback(comp);
+
+    // Default style sits at 88% down the frame; the top should be untouched.
+    const top = pixels.at(0.5, 0.15);
+    const bottom = pixels.at(0.5, 0.88);
+    expect(bottom[0]).not.toBe(top[0]);
+    disposeCompositor(comp);
+  });
+
+  it("is drawn over the whole stack, including a transition", async () => {
+    // Captions go on last so a crossfade cannot fade them.
+    await setUp((d) => {
+      const track = videoTrack(d);
+      edits.insertClip(d, track.id, { type: "solid", color: "#000000" }, 20, {
+        startFrame: 0,
+        mode: "overwrite",
+      });
+      edits.insertClip(d, track.id, { type: "solid", color: "#ffffff" }, 20, {
+        startFrame: 20,
+        mode: "overwrite",
+      });
+      edits.addCue(d, 0, 40, "OVER");
+    });
+
+    const scene = buildScene(doc(), 10);
+    const last = scene.nodes[scene.nodes.length - 1];
+    expect(last.kind).toBe("layer");
+    if (last.kind === "layer") expect(last.layer.source.type).toBe("subtitle");
   });
 });

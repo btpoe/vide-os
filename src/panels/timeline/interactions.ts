@@ -376,6 +376,48 @@ export function beginMarkerDrag(event: PointerEvent, markerId: string): void {
   });
 }
 
+// ── Captions ──────────────────────────────────────────────────────────
+
+/**
+ * Drags a caption: the whole cue, or one of its edges.
+ *
+ * Absolute like every other drag — the target is computed from where the
+ * gesture started, not accumulated from the last pointer move.
+ */
+export function beginCueDrag(
+  event: PointerEvent,
+  cueId: string,
+  mode: "move" | "start" | "end",
+): void {
+  const cue = doc().subtitles.find((c) => c.id === cueId);
+  if (!cue) return;
+
+  const original = { start: cue.startFrame, end: cue.endFrame };
+  const length = original.end - original.start;
+  const snapTargets = candidates();
+
+  trackPointer(event, {
+    label: mode === "move" ? "Move caption" : "Trim caption",
+    icon: "💬",
+    onMove: (_frame, deltaFrames) => {
+      const anchor = mode === "end" ? original.end : original.start;
+      const wanted = Math.max(0, Math.round(anchor + deltaFrames));
+      const { frame, snapped } = snapFrame(timelineView(), wanted, snapTargets);
+      setSnapGuideFrame(snapped);
+
+      applyEdit("Move caption", (d) => {
+        if (mode === "move") {
+          edits.updateCue(d, cueId, { startFrame: frame, endFrame: frame + length });
+        } else if (mode === "start") {
+          edits.updateCue(d, cueId, { startFrame: frame });
+        } else {
+          edits.updateCue(d, cueId, { endFrame: frame });
+        }
+      });
+    },
+  });
+}
+
 // ── Razor ─────────────────────────────────────────────────────────────
 
 /** Splits the clip under the pointer. One click, one undo step. */
