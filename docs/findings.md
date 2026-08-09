@@ -508,8 +508,81 @@ rewritten.
 
 ---
 
+## Phase 6 — editing depth
+
+### Found
+
+- **Ripple-extending an edge silently did nothing.** The plain trim refuses to
+  cross its neighbour, which is exactly what a ripple is supposed to push out
+  of the way. The neighbour clamp is now optional and lifted only for ripple.
+- **`cloneClip` reused the effect and keyframe ids of the clip it copied.** A
+  pasted or split clip therefore shared ids with its original. Nothing looks
+  those up across clips today, which is why it was invisible — and why the
+  first feature that does would have been the one to find it. Every nested id
+  is minted fresh now.
+- **`moveClip` compared tracks by identity.** `track()` returns a fresh
+  mutative draft proxy on each call, so a same-track move passed explicitly as
+  `toTrackId` compared unequal and took the _cross-track_ path — removing the
+  clip from one proxy of the array and pushing it onto another. Whichever write
+  landed second won, and three clips became one. Compared by id now.
+- **Moving a group by looping over `moveClip` scatters it.** Each move sees the
+  others still in place and shoves itself past them, so dragging three butted
+  clips one frame right pushed them apart. `moveClips` detaches the whole set
+  first, so each clip is placed against what is _staying_.
+- **Marker and caption rows lost focus on every keystroke.** Structural sharing
+  means every edit produces a new object, and Solid's `For` compares by
+  reference, so the row was rebuilt mid-word and took the caret with it. Both
+  lists iterate stable ids now, and the test asserts the input element survives
+  the edit rather than checking the text.
+- **Nudge moved clips by one second.** Shift+Arrow is one frame in every NLE.
+- **`clip-edits.ts` and `EffectsPanel` still pushed hand-written undo
+  inverses** beside the snapshot history, left over from Phase 1.
+
+### Decided
+
+- **Grab target, not tool, decides which edge edit happens.** Select trims,
+  Select+Alt ripples, the Trim tool rolls, and slip and slide are grabs of the
+  clip body. Four operations on one handle beats four handles.
+- **Slip, slide and roll get absolute forms.** A live drag reports its _total_
+  offset and applies an edit on every pointer move, so a relative operation
+  would accumulate — a ten-frame drag becoming fifty-five frames of edit.
+- **Selection is decided on pointer-up, not pointer-down.** Clicking an
+  already-selected clip narrows the selection to it; _dragging_ one moves the
+  whole group. On pointer-down there is no way to tell which is happening.
+- **Captions are a list on the document, not clips on a track.** A caption has
+  no in-point, no speed and nothing to trim against, and importing an hour of
+  dialogue would otherwise mint two thousand clips each carrying a transform, a
+  crop and an effects chain it will never use.
+- **Recovery is quiet.** A normal reload silently restores the newest autosave;
+  the dialog appears only after a crash _and_ only when there is an older
+  revision to choose. Prompting every launch is how people learn to dismiss the
+  dialog that matters.
+- **No pitch-preservation toggle on retime.** `AudioBufferSourceNode.playbackRate`
+  resamples and has no `preservesPitch` — that is an `HTMLMediaElement`
+  property. Keeping pitch needs a time-stretcher, which is not built, so the
+  panel says the audio is pitched rather than offering a checkbox that lies.
+  Listed under open items.
+
+### Testing notes
+
+- **Browser-mode tests load no stylesheet.** Tailwind's `absolute` never
+  applies, so every element measures at the origin. The drag tests were
+  unaffected because they use only _relative_ motion; a positional assertion
+  has to read the inline offset instead.
+- **`openFrameCount()` counts created-minus-closed, not borrowed-minus-released.**
+  A cached frame is legitimately open. Asserting zero is only meaningful once
+  whatever owns the cache has been disposed — which is what led to export
+  getting its own decoder pool, as its own comment had said it should.
+
+---
+
 ## Open items not yet scheduled
 
+- **Retime does not preserve pitch.** A slowed clip sounds lower. Web Audio
+  resamples and offers no `preservesPitch` on a buffer source, so this needs a
+  time-stretcher (WSOLA or a phase vocoder) sharing one code path with the
+  offline render, as the rest of the audio graph does. Deliberately not faked
+  with a checkbox in the meantime.
 - **Subtitle parsing has never met a real file.** The SRT/VTT fixtures are
   hand-written to cover the cases I know break — comma versus dot, optional
   hours, CRLF, BOM, cue settings, missing index, no trailing newline. That is

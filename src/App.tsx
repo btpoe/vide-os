@@ -20,6 +20,15 @@ import {
   restoreLastSession,
 } from "./stores/project-store";
 import { frameRateToNumber } from "@/lib/timecode";
+import { platform } from "@/platform";
+import type { Bytes, FileRef } from "@/platform/types";
+import {
+  rememberProject,
+  resolveRecent,
+  forgetRecent,
+  recentProjects,
+  type RecentProject,
+} from "@/stores/recent-projects";
 import {
   packBundle,
   mediaTableFromDoc,
@@ -254,7 +263,14 @@ const App: Component = () => {
         label: "Save Project",
         shortcut: "Mod+S",
         category: "File",
-        run: handleSaveProject,
+        run: () => handleSaveProject(false),
+      },
+      {
+        id: "file.saveAs",
+        label: "Save Project As...",
+        shortcut: "Mod+Shift+S",
+        category: "File",
+        run: () => handleSaveProject(true),
       },
       {
         id: "file.export",
@@ -333,54 +349,101 @@ const App: Component = () => {
     newProject();
   };
 
-  const handleSaveProject = () => {
-    // Writes a `.videos` bundle: the document plus a media table recording
-    // where each asset lives, so the project can be reopened elsewhere. The
-    // old format saved no media list at all.
-    const document_ = doc();
-    const bytes = packBundle({
-      doc: document_,
-      media: mediaTableFromDoc(document_),
-    });
+  /**
+   * The file the project was last saved to or opened from.
+   *
+   * Save writes back to it; Save As picks a new one. Without this, every save
+   * was a fresh download — a folder full of `Project (3).videos`.
+   */
+  const [projectRef, setProjectRef] = createSignal<FileRef | null>(null);
 
-    const blob = new Blob([bytes], { type: "application/zip" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = projectFileName(document_.name);
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleSaveProject = (chooseLocation = false) =>
+    void (async () => {
+      // Writes a `.videos` bundle: the document plus a media table recording
+      // where each asset lives, so the project can be reopened elsewhere. The
+      // old format saved no media list at all.
+      const document_ = doc();
+      const bytes = packBundle({
+        doc: document_,
+        media: mediaTableFromDoc(document_),
+      });
 
-    // Recorded so recovery can tell whether an autosave is actually newer than
-    // the file, and stay quiet when it is not.
-    void markSavedToFile();
+      let ref = chooseLocation ? null : projectRef();
+      if (!ref) {
+        ref = await platform.fs.pickSaveFile({
+          suggestedName: projectFileName(document_.name),
+          accept: [{ description: "VideOS project", extensions: ["videos"] }],
+        });
+      }
+
+      if (ref) {
+        await platform.fs.write(ref, bytes);
+        setProjectRef(ref);
+        void rememberProject(document_.name, ref);
+      } else {
+        // No picker, or the user cancelled it. A download is the fallback
+        // rather than losing the save.
+        const blob = new Blob([bytes], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = projectFileName(document_.name);
+        a.click();
+        URL.revokeObjectURL(url);
+        void rememberProject(document_.name, null);
+      }
+
+      // Recorded so recovery can tell whether an autosave is actually newer
+      // than the file, and stay quiet when it is not.
+      void markSavedToFile();
+    })();
+
+  /** Reads a project bundle and swaps it in, reporting anything odd about it. */
+  const openBytes = (bytes: Bytes, ref: FileRef | null): boolean => {
+    try {
+      // Parses, migrates from any older format, and validates against the
+      // document invariants before anything is swapped in.
+      const { doc: loaded, warnings } = readProjectFile(bytes);
+      loadDocument(loaded);
+      setProjectRef(ref);
+      void rememberProject(loaded.name, ref);
+      if (warnings.length > 0) setOpenWarnings(warnings);
+      return true;
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? `Could not open the project:\n\n${error.message}`
+          : "Could not open the project.",
+      );
+      return false;
+    }
   };
 
-  const handleOpenProject = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".videos,.json";
-    input.onchange = () =>
-      void (async () => {
-        const file = input.files?.[0];
-        if (!file) return;
-        try {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          // Parses, migrates from any older format, and validates against the
-          // document invariants before anything is swapped in.
-          const { doc: loaded, warnings } = readProjectFile(bytes);
-          loadDocument(loaded);
-          if (warnings.length > 0) setOpenWarnings(warnings);
-        } catch (error) {
-          alert(
-            error instanceof Error
-              ? `Could not open the project:\n\n${error.message}`
-              : "Could not open the project.",
-          );
-        }
-      })();
-    input.click();
-  };
+  const handleOpenProject = () =>
+    void (async () => {
+      const [ref] = await platform.fs.pickOpenFiles({
+        accept: [{ description: "VideOS project", extensions: ["videos", "json"] }],
+      });
+      if (!ref) return;
+      openBytes(await platform.fs.read(ref), ref);
+    })();
+
+  /** Opens something from the recent list, dropping it if it has gone. */
+  const openRecent = (entry: RecentProject) =>
+    void (async () => {
+      const ref = await resolveRecent(entry);
+      if (!ref) {
+        // Moved, deleted, or the grant withdrawn. Saying so beats a dialog
+        // that fails with no explanation.
+        alert(`"${entry.name}" could not be reopened. It may have been moved.`);
+        forgetRecent(entry);
+        return;
+      }
+      // A stored handle needs its permission re-granted, and that has to
+      // happen inside this click.
+      if (!(await platform.fs.requestPermission(ref))) return;
+      openBytes(await platform.fs.read(ref), ref);
+    })();
 
   /**
    * Builds a menu entry from a registered command, so the label, shortcut
@@ -419,7 +482,19 @@ const App: Component = () => {
     File: [
       fromCommand("file.new", "New Project"),
       fromCommand("file.open", "Open Project..."),
+      ...(recentProjects().length > 0
+        ? [
+            { label: "", separator: true } as const,
+            ...recentProjects()
+              .slice(0, 5)
+              .map((entry) => ({
+                label: entry.name || "Untitled Project",
+                action: () => openRecent(entry),
+              })),
+          ]
+        : []),
       fromCommand("file.save", "Save Project"),
+      fromCommand("file.saveAs", "Save Project As..."),
       { label: "", separator: true },
       fromCommand("file.export", "Export..."),
     ],
