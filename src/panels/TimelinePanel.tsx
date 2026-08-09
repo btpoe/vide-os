@@ -34,6 +34,7 @@ import TimelineRuler, { RULER_HEIGHT_PX } from "./timeline/TimelineRuler";
 import TrackHeader, { TRACK_HEADER_WIDTH_PX } from "./timeline/TrackHeader";
 import TrackLane from "./timeline/TrackLane";
 import TimelineOverlay from "./timeline/TimelineOverlay";
+import MarkerLane, { MARKER_LANE_HEIGHT_PX } from "./timeline/MarkerLane";
 import { frameFromEvent } from "./timeline/interactions";
 
 /**
@@ -216,6 +217,23 @@ const TimelinePanel: Component = () => {
             </div>
           </div>
 
+          {/* Markers sit between the ruler and the tracks: they belong to the
+              sequence, not to any one track. */}
+          <div class="flex">
+            <div
+              class="sticky left-0 z-20 shrink-0 border-b border-r border-border bg-panel-header flex items-center px-1.5 text-[9px] text-muted-foreground"
+              style={{
+                width: `${TRACK_HEADER_WIDTH_PX}px`,
+                height: `${MARKER_LANE_HEIGHT_PX}px`,
+              }}
+            >
+              Markers
+            </div>
+            <div class="relative" style={{ width: `${stripWidth()}px` }}>
+              <MarkerLane />
+            </div>
+          </div>
+
           <For each={tracks()}>
             {(track) => (
               <div class="flex">
@@ -247,7 +265,9 @@ const TimelinePanel: Component = () => {
             class="absolute top-0 pointer-events-none"
             style={{ left: `${TRACK_HEADER_WIDTH_PX}px`, width: `${stripWidth()}px` }}
           >
-            <TimelineOverlay heightPx={RULER_HEIGHT_PX + bodyHeight()} />
+            <TimelineOverlay
+              heightPx={RULER_HEIGHT_PX + MARKER_LANE_HEIGHT_PX + bodyHeight()}
+            />
           </div>
         </div>
       </div>

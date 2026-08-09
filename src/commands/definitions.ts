@@ -5,7 +5,13 @@
  * here — never a second implementation of an action that already exists.
  */
 
-import { doc, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
+import {
+  doc,
+  playheadFrame,
+  sequenceFrameRate,
+  addMarkerAtPlayhead,
+  adjacentMarker,
+} from "@/stores/project-store";
 import {
   togglePlayback,
   pause,
@@ -265,6 +271,43 @@ export const commands: Command[] = [
     shortcut: "Mod+0",
     category: "Timeline",
     run: zoomToFrameLevel,
+  },
+
+  // ── Markers ────────────────────────────────────────────────────────
+  {
+    id: "marker.add",
+    label: "Add Marker",
+    shortcut: "M",
+    category: "Markers",
+    run: () => addMarkerAtPlayhead(),
+  },
+  {
+    id: "marker.next",
+    label: "Next Marker",
+    shortcut: "Shift+M",
+    category: "Markers",
+    enabled: () => adjacentMarker(1) !== null,
+    run: () => {
+      const marker = adjacentMarker(1);
+      if (marker) {
+        seekToFrame(marker.frame);
+        revealFrame(marker.frame);
+      }
+    },
+  },
+  {
+    id: "marker.previous",
+    label: "Previous Marker",
+    shortcut: "Shift+Alt+M",
+    category: "Markers",
+    enabled: () => adjacentMarker(-1) !== null,
+    run: () => {
+      const marker = adjacentMarker(-1);
+      if (marker) {
+        seekToFrame(marker.frame);
+        revealFrame(marker.frame);
+      }
+    },
   },
 
   // ── Tools ──────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ import PreviewPanel from "./panels/PreviewPanel";
 import ToolsPanel from "./panels/ToolsPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import PropertiesPanel from "./panels/properties/PropertiesPanel";
+import MarkersPanel from "./panels/MarkersPanel";
 import HistoryPanel from "./panels/HistoryPanel";
 import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
@@ -136,6 +137,14 @@ const builtInPanels: PanelDefinition[] = [
     category: "utility",
     component: () => createPanelElement("Mixer", MixerPanel),
     defaultPosition: { area: "right", order: 3 },
+  },
+  {
+    id: "markers",
+    name: "Markers",
+    icon: "🔖",
+    category: "utility",
+    component: () => createPanelElement("Markers", MarkersPanel),
+    defaultPosition: { area: "right", order: 4 },
   },
   {
     id: "history",

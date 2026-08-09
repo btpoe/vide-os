@@ -26,6 +26,7 @@ import {
   type Asset,
   type TransitionType,
   type TextStyle,
+  type Marker,
   createEmptyDoc,
   contentEndFrame,
   clipEndFrame,
@@ -469,6 +470,42 @@ export function removeClipTransition(trackId: string, clipId: string): void {
     },
     { icon: "🔀" },
   );
+}
+
+// ── Markers ───────────────────────────────────────────────────────────
+
+/** Adds a marker at the playhead and returns its id, for immediate editing. */
+export function addMarkerAtPlayhead(name = "", color?: string): string {
+  let created = "";
+  applyEdit(
+    "Add marker",
+    (d) => {
+      created = edits.addMarker(d, playheadFrame(), name, color).id;
+    },
+    { icon: "🔖" },
+  );
+  return created;
+}
+
+export function removeMarker(markerId: string): void {
+  applyEdit("Delete marker", (d) => edits.removeMarker(d, markerId), { icon: "🔖" });
+}
+
+export function updateMarker(markerId: string, patch: Partial<Marker>): void {
+  applyEdit("Edit marker", (d) => edits.updateMarker(d, markerId, patch), {
+    icon: "🔖",
+    // Typing a name should be one history entry, not one per keystroke.
+    coalesceKey: `marker:${markerId}`,
+  });
+}
+
+/** The marker nearest the playhead in a direction, or null. */
+export function adjacentMarker(direction: -1 | 1): Marker | null {
+  const frame = playheadFrame();
+  const candidates = doc()
+    .markers.filter((m) => (direction < 0 ? m.frame < frame : m.frame > frame))
+    .sort((a, b) => (direction < 0 ? b.frame - a.frame : a.frame - b.frame));
+  return candidates[0] ?? null;
 }
 
 // ── Animatable parameters ─────────────────────────────────────────────

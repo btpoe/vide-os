@@ -354,6 +354,28 @@ export function beginRippleTrim(
   });
 }
 
+// ── Markers ───────────────────────────────────────────────────────────
+
+/** Drags a marker along the timeline, snapping to clip edges. */
+export function beginMarkerDrag(event: PointerEvent, markerId: string): void {
+  const marker = doc().markers.find((m) => m.id === markerId);
+  if (!marker) return;
+
+  const originalFrame = marker.frame;
+  const snapTargets = candidates();
+
+  trackPointer(event, {
+    label: "Move marker",
+    icon: "🔖",
+    onMove: (_frame, deltaFrames) => {
+      const wanted = Math.max(0, Math.round(originalFrame + deltaFrames));
+      const { frame, snapped } = snapFrame(timelineView(), wanted, snapTargets);
+      setSnapGuideFrame(snapped);
+      applyEdit("Move marker", (d) => edits.updateMarker(d, markerId, { frame }));
+    },
+  });
+}
+
 // ── Razor ─────────────────────────────────────────────────────────────
 
 /** Splits the clip under the pointer. One click, one undo step. */
