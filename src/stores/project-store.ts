@@ -18,7 +18,7 @@
  */
 
 import { create } from "mutative";
-import { createSignal, batch } from "solid-js";
+import { createSignal, createEffect, on, batch } from "solid-js";
 import {
   type ProjectDoc,
   type Track as DocTrack,
@@ -59,22 +59,23 @@ import {
 } from "@/lib/animation";
 import { framesToSeconds, secondsToFrames, type FrameRate } from "@/lib/timecode";
 import { newId } from "@/model/ids";
-import { loadState, createPersistEffect } from "@/lib/persist";
+import {
+  writeRevision,
+  listRevisions,
+  readRevision,
+  AUTOSAVE_DELAY_MS,
+} from "@/lib/autosave";
 
 // ── Document state ────────────────────────────────────────────────────
 
-const PROJECT_KEY = "project-doc";
-
+/**
+ * The document the editor starts with.
+ *
+ * Empty, always. The last session is restored asynchronously from OPFS by
+ * `initProjectPersistence`, because OPFS has no synchronous read and the
+ * editor must not block on storage before it can draw anything.
+ */
 function loadInitialDoc(): ProjectDoc {
-  const saved = loadState<ProjectDoc>(PROJECT_KEY);
-  if (!saved) return createEmptyDoc();
-  try {
-    // Autosaved documents are already current-format; a bad one should not
-    // prevent the app from starting.
-    if (saved.formatVersion === createEmptyDoc().formatVersion) return saved;
-  } catch {
-    // fall through
-  }
   return createEmptyDoc();
 }
 
@@ -218,7 +219,44 @@ export function assets(): readonly Asset[] {
  * them changed. Every panel reads `doc()` now, so all of that is gone.
  */
 export function initProjectPersistence(): void {
-  createPersistEffect(PROJECT_KEY, () => doc());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  createEffect(
+    on(
+      () => doc(),
+      (current) => {
+        // Debounced rather than written per edit: a drag applies an edit on
+        // every pointer move, and none of those intermediate states is worth
+        // a file.
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          void writeRevision(current).catch(() => undefined);
+        }, AUTOSAVE_DELAY_MS);
+      },
+      { defer: true },
+    ),
+  );
+}
+
+/**
+ * Restores the most recent autosave, if there is one and nothing has been
+ * loaded yet.
+ *
+ * Silent, because a reload is not a crash: continuing where you left off is
+ * the expected behaviour, and prompting on every launch teaches people to
+ * dismiss the dialog that matters. Recovering an *older* revision is a
+ * separate, explicit act.
+ */
+export async function restoreLastSession(): Promise<boolean> {
+  const revisions = await listRevisions();
+  const newest = revisions[0];
+  if (!newest) return false;
+
+  const restored = await readRevision(newest.key);
+  if (!restored) return false;
+
+  loadDocument(restored);
+  return true;
 }
 
 // ── Compatibility operations ──────────────────────────────────────────

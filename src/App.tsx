@@ -17,6 +17,7 @@ import {
   loadDocument,
   newProject,
   initProjectPersistence,
+  restoreLastSession,
 } from "./stores/project-store";
 import { frameRateToNumber } from "@/lib/timecode";
 import {
@@ -49,6 +50,15 @@ import ToolsPanel from "./panels/ToolsPanel";
 import EffectsPanel from "./panels/EffectsPanel";
 import PropertiesPanel from "./panels/properties/PropertiesPanel";
 import MarkersPanel from "./panels/MarkersPanel";
+import RecoveryDialog from "./panels/RecoveryDialog";
+import {
+  recoveryOffer,
+  markSessionOpen,
+  markSessionClosed,
+  markSavedToFile,
+  dropLegacyLocalStorageDoc,
+  type RecoveryOffer,
+} from "@/lib/autosave";
 import HistoryPanel from "./panels/HistoryPanel";
 import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
@@ -164,8 +174,33 @@ const App: Component = () => {
   const [aboutOpen, setAboutOpen] = createSignal(false);
   const [openWarnings, setOpenWarnings] = createSignal<string[]>([]);
   const [relinkOpen, setRelinkOpen] = createSignal(false);
+  const [recovery, setRecovery] = createSignal<RecoveryOffer | null>(null);
+
+  /**
+   * Restores the last session, then decides whether to offer recovery.
+   *
+   * The order matters: the crash flag has to be *read* before this session
+   * writes its own, or every launch looks like a crash.
+   */
+  const startSession = async () => {
+    dropLegacyLocalStorageDoc();
+    const offer = await recoveryOffer();
+    await restoreLastSession();
+    await markSessionOpen();
+    // Only after a crash, and only when there is something older to go back
+    // to than what was just restored.
+    if (offer?.afterCrash && offer.all.length > 1) setRecovery(offer);
+  };
 
   onMount(() => {
+    void startSession();
+
+    // Best-effort: an unload handler is not guaranteed to finish, which is
+    // exactly why the flag it clears is what detects a crash.
+    const onUnload = () => void markSessionClosed();
+    window.addEventListener("pagehide", onUnload);
+    onCleanup(() => window.removeEventListener("pagehide", onUnload));
+
     // Initialize persistent state auto-save
     initProjectPersistence();
     initTimelinePersistence();
@@ -297,6 +332,10 @@ const App: Component = () => {
     a.download = projectFileName(document_.name);
     a.click();
     URL.revokeObjectURL(url);
+
+    // Recorded so recovery can tell whether an autosave is actually newer than
+    // the file, and stay quiet when it is not.
+    void markSavedToFile();
   };
 
   const handleOpenProject = () => {
@@ -518,6 +557,12 @@ const App: Component = () => {
       {/* Export Dialog */}
       <ExportDialog open={exportOpen()} onClose={() => setExportOpen(false)} />
       <RelinkDialog open={relinkOpen()} onClose={() => setRelinkOpen(false)} />
+
+      <Show when={recovery()}>
+        {(offer) => (
+          <RecoveryDialog offer={offer()} onClose={() => setRecovery(null)} />
+        )}
+      </Show>
 
       {/*
         Notes from opening an older project — offline media, trimmed overlaps,
