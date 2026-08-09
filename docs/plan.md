@@ -88,12 +88,28 @@ rewrite. That option is still open and still unexercised.
 This is a responsiveness item, not a correctness one — which is why it keeps
 slipping, and why it should be scheduled explicitly or dropped explicitly.
 
+**Do:** take the waveform analysis first, since the rewrite in item 1 has to
+touch it anyway and analysing an hour of audio is the longest single block of
+main-thread work in the app. Judge the media engine separately afterwards, on
+a measurement rather than on principle: if decode is not stalling frames, the
+async facade is insurance and should be recorded as such rather than cashed in
+for a transport that has to marshal `VideoFrame`s across a boundary.
+
 ### 3. No preview quality ladder (from Phase 4)
 
 Phase 4 specified a quality ladder driven by measured frame time (1/1, 1/2,
 1/4). `ResizeObserver` and DPR handling landed; the ladder did not. Preview
 renders at full sequence resolution regardless of how long a frame takes, so a
 4K project previews at 4K.
+
+**Do:** measure frame time in the scheduler, which already owns the loop, and
+scale the compositor's render targets — not the canvas — by 1/1, 1/2 or 1/4,
+presenting upscaled. Two details decide whether it feels right rather than
+merely faster: hysteresis, so a frame near the threshold does not oscillate
+between rungs and shimmer; and dropping back to full resolution whenever the
+playhead settles, because a paused frame has all the time it needs and is the
+one people actually look at. The `settleFrame` path added with the preview fix
+is the natural place for that.
 
 ### 4. The verification tiers drifted
 
@@ -104,12 +120,55 @@ renders at full sequence resolution regardless of how long a frame takes, so a
   arguably the better trade (no reference images to regenerate, and each
   assertion says what it is checking), but the plan should say so and the three
   unused dependencies should go.
+
+  **Do:** delete `pixelmatch`, `pngjs` and `@types/pngjs`. The convention
+  itself is already written up in
+  [`architecture.md`](architecture.md); what remains is removing the three
+  dependencies that imply the other approach. Reference images would have to be
+  regenerated on every GPU and driver the suite runs on, whereas a probe saying
+  "the pixel above the plate is lit after the blur" survives that and reads as
+  an assertion about the feature.
+
 - **The Playwright E2E tier does not exist.** There is no
   `playwright.config.ts`; Playwright is present only as the driver for
   Vitest browser mode. The five E2E flows the plan listed are largely covered
   by browser-mode tests that mount real components and dispatch real pointer
   events — but "import a file through the OS picker" is not, and cannot be.
 - **CI has no perf budgets.** Phase 8 item, not started.
+
+- **Nothing tested that the application asks the renderer for anything.** The
+  renderer suites all warm the decoder cache themselves before rendering, which
+  is exactly the step the app was missing — so the preview could be black on
+  every launch with every test green. Found by the preview work, recorded in
+  [`findings.md`](findings.md), and the reason the two smoke flows below are
+  worth more than their size suggests.
+
+  **Do:** add browser tests that mount a panel, put a clip on the timeline, and
+  assert the picture appears _without_ the test priming anything — one for the
+  preview, one for a scrub, one for playback. Anywhere a test's setup performs
+  a step the application must also perform, the test is proving the wrong
+  thing.
+
+---
+
+## Sequencing
+
+**Do the carried-forward decoration work before Phase 7**, not after. The
+recommendation is not about tidiness:
+
+- A waveform at 18 seconds per bar makes audio editing guesswork, and it is
+  visible within the first minute of a real edit. Everything shipped through
+  Phase 6 assumes you can see where the sound is.
+- Both generators are the last code in the app still using the pre-rewrite
+  media path. Leaving them means the `<video>`-element decode path that Phase 3
+  deleted everywhere else has to be carried into the desktop build and made to
+  work there too.
+- Phase 7 is the first phase the existing suites cannot verify. Starting it
+  with known-broken subsystems underneath makes any failure ambiguous between
+  the new shell and the old code.
+
+Phase 8's remaining items — perf budgets, the debug HUD, accessibility — can
+stay after Phase 7. They do not block a real edit.
 
 ---
 
@@ -146,8 +205,10 @@ weight.
   and waveform analysis into workers, or record that the facade's async shape
   is insurance rather than a plan.
 - Preview quality ladder (item 3).
-- Drop `pixelmatch`/`pngjs`, or use them; document the pixel-probe approach as
-  the golden-frame tier (item 4).
+- Drop `pixelmatch`/`pngjs`/`@types/pngjs`, which imply a golden-image tier
+  that was deliberately not built (item 4).
+- Add the join tests: mount a panel, put a clip on the timeline, assert a
+  picture appears without the test priming the cache (item 4).
 - CI-enforced perf budgets: scene build under 2 ms at 1000 clips, preview frame
   under 16 ms at half resolution.
 - Debug HUD: decoder count, cache bytes, frame-leak counter, dropped frames.

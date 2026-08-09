@@ -624,6 +624,69 @@ own. Read the composite framebuffer, as the compositor tests already did.
 
 ---
 
+## Reviewing the plan against the code (after Phase 6)
+
+### Found
+
+- **Four specified items were never built, never recorded, and therefore read
+  as done.** Not one of them was a decision to skip something; each was work
+  that fell out of a phase whose other parts landed, and the phase was reported
+  complete. They are listed with their remedies in
+  [`plan.md`](plan.md#carried-forward): the timeline decoration generators
+  (Phase 2), any worker at all (Phases 2 and 5), the preview quality ladder
+  (Phase 4), and the golden-frame and E2E test tiers.
+
+  The one that matters in use is the first: `lib/waveform.ts` still produces a
+  fixed 200 peaks per file, so a bar is 18 seconds on an hour-long recording —
+  the exact defect Phase 2 set out to remove — and `lib/clip-thumbnails.ts`
+  still makes a `<video>` element per file, which is what Phase 3 deleted
+  `frame-source.ts` to stop doing. That path survived the cull because nothing
+  pointed at it.
+
+- **`docs/architecture.md` had drifted badly enough to mislead.** It marked
+  eight built systems "planned" and described `frame-source.ts` and
+  `export-engine.ts` in the present tense, months after both were deleted. A
+  document that is wrong about what exists is worse than no document, because
+  it is consulted instead of the code.
+
+### Decided
+
+- **A phase is not complete until its gaps are written down.** The failure here
+  was not skipping work — some of it was reasonable to defer — but skipping it
+  silently, so nothing distinguished "deferred" from "done". Anything a phase
+  specifies and does not deliver goes in this file before that phase is
+  reported finished.
+- **Architecture notes carry `**Not built:**` markers** where the design is
+  settled and the code is not, so the two states are distinguishable at a
+  glance rather than by reading the source.
+- **One copy of the plan.** It lives at `docs/plan.md`; the plan-mode file is a
+  pointer to it. Two copies drift, and the one outside the repository drifts
+  faster because nothing reviews it.
+
+---
+
+## A rule the preview bug earned
+
+A test whose setup performs a step the application must also perform is not
+testing the application.
+
+Every renderer test warmed the decoder cache by awaiting `getExact` before
+rendering. That is the one thing the app did not do, so the preview could be
+black on every launch with the whole suite green — the compositor was proven
+correct and nothing was proven to ask it for anything. The suites were built
+outward from the units, and the seam between them was the gap.
+
+The remedy is cheap and is now scheduled: a handful of tests that mount a real
+panel, put a clip on a real timeline, and assert a picture appears **without
+priming anything**. Not more coverage — coverage was fine — but coverage of the
+join.
+
+The same shape is worth watching for elsewhere. Any place a test constructs
+state the app is responsible for constructing is a place a whole feature can be
+missing without a red test.
+
+---
+
 ## Open items not yet scheduled
 
 - **Retime does not preserve pitch.** A slowed clip sounds lower. Web Audio
