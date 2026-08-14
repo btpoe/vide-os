@@ -6,6 +6,7 @@ import {
   createResource,
   createMemo,
 } from "solid-js";
+import Overlay from "./Overlay";
 import {
   exportTimeline,
   downloadBlob,
@@ -170,205 +171,201 @@ const ExportDialog: Component<ExportDialogProps> = (props) => {
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-        <div class="bg-card border border-border rounded-lg shadow-2xl w-[520px] max-h-[90vh] overflow-auto">
-          <div class="flex items-center justify-between px-5 py-3 border-b border-border">
-            <h2 class="text-sm font-semibold text-foreground">Export Video</h2>
-            <button
-              class="text-muted-foreground hover:text-foreground text-lg leading-none disabled:opacity-30"
-              onClick={props.onClose}
-              disabled={exporting()}
-            >
-              ✕
-            </button>
-          </div>
-
-          <Show when={!exporting()}>
-            <div class="px-5 py-4 space-y-4">
-              <div>
-                <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
-                  Format
-                </label>
-                <div class="flex gap-2">
-                  <For each={containers() ?? []}>
-                    {(container) => (
-                      <button
-                        class={`px-3 py-1.5 text-xs rounded border transition-colors ${
-                          settings().container === container.container
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : container.available
-                              ? "bg-secondary text-foreground border-border hover:bg-accent"
-                              : "bg-secondary/50 text-muted-foreground/40 border-border/50 cursor-not-allowed"
-                        }`}
-                        disabled={!container.available}
-                        title={container.reason}
-                        onClick={() => update("container", container.container)}
-                      >
-                        {container.label}
-                      </button>
-                    )}
-                  </For>
-                  <Show when={containers.loading}>
-                    <span class="text-[10px] text-muted-foreground self-center">
-                      checking…
-                    </span>
-                  </Show>
-                </div>
-                <Show when={chosen()}>
+      <Overlay
+        title="Export Video"
+        onClose={props.onClose}
+        width="w-[520px]"
+        // A render in progress is writing to a file the user chose. Escape and
+        // the backdrop are blocked with the ✕ rather than separately, so there
+        // is no way out that abandons the write half-done — Cancel Export is
+        // the one that stops it, and it says so.
+        closeDisabled={exporting()}
+      >
+        <Show when={!exporting()}>
+          <div class="px-5 py-4 space-y-4">
+            <div>
+              <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
+                Format
+              </label>
+              <div class="flex gap-2">
+                <For each={containers() ?? []}>
                   {(container) => (
-                    <div class="mt-1.5 text-[10px] text-muted-foreground">
-                      {codecLabel(container().video)}
-                      {settings().includeAudio
-                        ? ` · ${codecLabel(container().audio)}`
-                        : " · no audio"}
-                      <Show when={container().reason}>
-                        <span class="text-yellow-500"> — {container().reason}</span>
-                      </Show>
-                    </div>
+                    <button
+                      class={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                        settings().container === container.container
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : container.available
+                            ? "bg-secondary text-foreground border-border hover:bg-accent"
+                            : "bg-secondary/50 text-muted-foreground/40 border-border/50 cursor-not-allowed"
+                      }`}
+                      disabled={!container.available}
+                      title={container.reason}
+                      onClick={() => update("container", container.container)}
+                    >
+                      {container.label}
+                    </button>
                   )}
+                </For>
+                <Show when={containers.loading}>
+                  <span class="text-[10px] text-muted-foreground self-center">
+                    checking…
+                  </span>
                 </Show>
               </div>
-
-              <div>
-                <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
-                  Size
-                </label>
-                <div class="flex flex-wrap gap-2">
-                  <For each={EXPORT_PRESETS}>
-                    {(preset) => (
-                      <button
-                        class={`px-3 py-1.5 text-xs rounded border transition-colors ${
-                          presetMatches(settings(), preset)
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-secondary text-foreground border-border hover:bg-accent"
-                        }`}
-                        title={preset.note}
-                        onClick={() => setSettings(applyPreset(settings(), preset))}
-                      >
-                        {preset.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <div class="mt-1.5 text-[10px] text-muted-foreground">
-                  {settings().width} × {settings().height} ·{" "}
-                  {frameRateToNumber(rate()).toFixed(2)} fps · {totalFrames()} frames ·{" "}
-                  {framesToTimecode(totalFrames(), rate())}
-                </div>
-                <div class="mt-0.5 text-[10px] text-muted-foreground/60">
-                  The frame rate comes from the sequence, so the export matches the
-                  timeline exactly.
-                </div>
-              </div>
-
-              <div>
-                <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
-                  Quality
-                </label>
-                <div class="flex gap-2">
-                  <For each={QUALITIES}>
-                    {(quality) => (
-                      <button
-                        class={`px-3 py-1.5 text-xs rounded border transition-colors ${
-                          settings().videoBitrate === quality.bps
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-secondary text-foreground border-border hover:bg-accent"
-                        }`}
-                        onClick={() => update("videoBitrate", quality.bps)}
-                      >
-                        {quality.label}
-                      </button>
-                    )}
-                  </For>
-                  <span class="text-[10px] text-muted-foreground self-center">
-                    {(settings().videoBitrate / 1_000_000).toFixed(0)} Mbps
-                  </span>
-                </div>
-              </div>
-
-              <label class="flex items-center gap-2 text-xs text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings().includeAudio}
-                  onChange={(e) => update("includeAudio", e.currentTarget.checked)}
-                  class="accent-primary"
-                />
-                Include audio
-              </label>
-
-              <Show when={error()}>
-                {(problem) => (
-                  <div class="rounded border border-destructive/50 bg-destructive/10 px-3 py-2">
-                    <div class="text-xs text-destructive">{problem().message}</div>
-                    <Show when={problem().remedy}>
-                      <div class="text-[10px] text-muted-foreground mt-0.5">
-                        {problem().remedy}
-                      </div>
+              <Show when={chosen()}>
+                {(container) => (
+                  <div class="mt-1.5 text-[10px] text-muted-foreground">
+                    {codecLabel(container().video)}
+                    {settings().includeAudio
+                      ? ` · ${codecLabel(container().audio)}`
+                      : " · no audio"}
+                    <Show when={container().reason}>
+                      <span class="text-yellow-500"> — {container().reason}</span>
                     </Show>
                   </div>
                 )}
               </Show>
             </div>
-          </Show>
 
-          <Show when={exporting()}>
-            <div class="px-5 py-6 space-y-4">
-              <div class="text-sm text-foreground font-medium">{phaseLabel()}</div>
-              <div class="w-full h-2 bg-secondary rounded-full overflow-hidden">
-                <div
-                  class={`h-full rounded-full transition-all duration-200 ${
-                    done() ? "bg-green-500" : "bg-primary"
-                  }`}
-                  style={{ width: `${(progress()?.progress ?? 0) * 100}%` }}
-                />
+            <div>
+              <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
+                Size
+              </label>
+              <div class="flex flex-wrap gap-2">
+                <For each={EXPORT_PRESETS}>
+                  {(preset) => (
+                    <button
+                      class={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                        presetMatches(settings(), preset)
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-secondary text-foreground border-border hover:bg-accent"
+                      }`}
+                      title={preset.note}
+                      onClick={() => setSettings(applyPreset(settings(), preset))}
+                    >
+                      {preset.label}
+                    </button>
+                  )}
+                </For>
               </div>
-              <div class="flex justify-between text-[10px] text-muted-foreground">
-                <span>{Math.round((progress()?.progress ?? 0) * 100)}%</span>
-                <Show when={progress()?.remainingMs != null}>
-                  <span>
-                    Elapsed {formatTime(progress()?.elapsedMs ?? 0)} · about{" "}
-                    {formatTime(progress()?.remainingMs ?? 0)} left
-                  </span>
-                </Show>
+              <div class="mt-1.5 text-[10px] text-muted-foreground">
+                {settings().width} × {settings().height} ·{" "}
+                {frameRateToNumber(rate()).toFixed(2)} fps · {totalFrames()} frames ·{" "}
+                {framesToTimecode(totalFrames(), rate())}
+              </div>
+              <div class="mt-0.5 text-[10px] text-muted-foreground/60">
+                The frame rate comes from the sequence, so the export matches the
+                timeline exactly.
               </div>
             </div>
-          </Show>
 
-          <div class="flex justify-end gap-2 px-5 py-3 border-t border-border">
-            <Show when={!exporting()}>
-              <button
-                class="px-4 py-1.5 text-xs rounded bg-secondary text-foreground hover:bg-accent border border-border"
-                onClick={props.onClose}
-              >
-                Close
-              </button>
-              <button
-                class="px-4 py-1.5 text-xs rounded bg-secondary text-foreground hover:bg-accent border border-border disabled:opacity-40"
-                disabled={totalFrames() === 0 || !chosen()?.available}
-                title="Write straight to disk. Necessary for anything too large to hold in memory."
-                onClick={() => void handleExport(true)}
-              >
-                Save to File…
-              </button>
-              <button
-                class="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 font-medium disabled:opacity-40"
-                disabled={totalFrames() === 0 || !chosen()?.available}
-                onClick={() => void handleExport(false)}
-              >
-                Export
-              </button>
-            </Show>
-            <Show when={exporting()}>
-              <button
-                class="px-4 py-1.5 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => controller()?.abort()}
-              >
-                Cancel Export
-              </button>
+            <div>
+              <label class="block text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
+                Quality
+              </label>
+              <div class="flex gap-2">
+                <For each={QUALITIES}>
+                  {(quality) => (
+                    <button
+                      class={`px-3 py-1.5 text-xs rounded border transition-colors ${
+                        settings().videoBitrate === quality.bps
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-secondary text-foreground border-border hover:bg-accent"
+                      }`}
+                      onClick={() => update("videoBitrate", quality.bps)}
+                    >
+                      {quality.label}
+                    </button>
+                  )}
+                </For>
+                <span class="text-[10px] text-muted-foreground self-center">
+                  {(settings().videoBitrate / 1_000_000).toFixed(0)} Mbps
+                </span>
+              </div>
+            </div>
+
+            <label class="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings().includeAudio}
+                onChange={(e) => update("includeAudio", e.currentTarget.checked)}
+                class="accent-primary"
+              />
+              Include audio
+            </label>
+
+            <Show when={error()}>
+              {(problem) => (
+                <div class="rounded border border-destructive/50 bg-destructive/10 px-3 py-2">
+                  <div class="text-xs text-destructive">{problem().message}</div>
+                  <Show when={problem().remedy}>
+                    <div class="text-[10px] text-muted-foreground mt-0.5">
+                      {problem().remedy}
+                    </div>
+                  </Show>
+                </div>
+              )}
             </Show>
           </div>
+        </Show>
+
+        <Show when={exporting()}>
+          <div class="px-5 py-6 space-y-4">
+            <div class="text-sm text-foreground font-medium">{phaseLabel()}</div>
+            <div class="w-full h-2 bg-secondary rounded-full overflow-hidden">
+              <div
+                class={`h-full rounded-full transition-all duration-200 ${
+                  done() ? "bg-green-500" : "bg-primary"
+                }`}
+                style={{ width: `${(progress()?.progress ?? 0) * 100}%` }}
+              />
+            </div>
+            <div class="flex justify-between text-[10px] text-muted-foreground">
+              <span>{Math.round((progress()?.progress ?? 0) * 100)}%</span>
+              <Show when={progress()?.remainingMs != null}>
+                <span>
+                  Elapsed {formatTime(progress()?.elapsedMs ?? 0)} · about{" "}
+                  {formatTime(progress()?.remainingMs ?? 0)} left
+                </span>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        <div class="flex justify-end gap-2 px-5 py-3 border-t border-border">
+          <Show when={!exporting()}>
+            <button
+              class="px-4 py-1.5 text-xs rounded bg-secondary text-foreground hover:bg-accent border border-border"
+              onClick={props.onClose}
+            >
+              Close
+            </button>
+            <button
+              class="px-4 py-1.5 text-xs rounded bg-secondary text-foreground hover:bg-accent border border-border disabled:opacity-40"
+              disabled={totalFrames() === 0 || !chosen()?.available}
+              title="Write straight to disk. Necessary for anything too large to hold in memory."
+              onClick={() => void handleExport(true)}
+            >
+              Save to File…
+            </button>
+            <button
+              class="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 font-medium disabled:opacity-40"
+              disabled={totalFrames() === 0 || !chosen()?.available}
+              onClick={() => void handleExport(false)}
+            >
+              Export
+            </button>
+          </Show>
+          <Show when={exporting()}>
+            <button
+              class="px-4 py-1.5 text-xs rounded bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => controller()?.abort()}
+            >
+              Cancel Export
+            </button>
+          </Show>
         </div>
-      </div>
+      </Overlay>
     </Show>
   );
 };

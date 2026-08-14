@@ -217,46 +217,18 @@ export async function getObjectURL(handle: FileSystemFileHandle): Promise<string
 }
 
 // ── Thumbnail generation ──────────────────────────────────────────────
+//
+// The video thumbnail used to live here, built on a `<video>` element seeked to
+// one second. It is now `posterFrame` in `lib/clip-thumbnails.ts`, which decodes
+// through the media engine's demuxer stack like everything else — `<video>`
+// elements leak toward Chrome's decoder cap and cannot seek accurately, which
+// is why Phase 3 deleted every other use of them. Stills stay here: no demuxer
+// reads a JPEG, and an `<img>` is not a decoder.
 
-export function generateVideoThumbnail(file: File, seekTime = 1): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    video.playsInline = true;
-
-    const url = URL.createObjectURL(file);
-    video.src = url;
-
-    video.onloadedmetadata = () => {
-      // Seek to the requested time or 10% of duration
-      video.currentTime = Math.min(seekTime, video.duration * 0.1 || seekTime);
-    };
-
-    video.onseeked = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 192;
-      canvas.height = Math.round(192 * (video.videoHeight / video.videoWidth)) || 108;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        URL.revokeObjectURL(url);
-        reject(new Error("Could not get canvas context"));
-        return;
-      }
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-      URL.revokeObjectURL(url);
-      resolve(dataUrl);
-    };
-
-    video.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Failed to load video for thumbnail"));
-    };
-  });
-}
-
-export function generateImageThumbnail(file: File): Promise<string> {
+// Takes a Blob rather than a File: the media pool reaches its bytes through
+// `entryFile`, which returns either, depending on whether the entry arrived
+// with a handle or was relinked. Nothing here needs a name or a modified time.
+export function generateImageThumbnail(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
@@ -286,70 +258,19 @@ export function generateImageThumbnail(file: File): Promise<string> {
 }
 
 // ── Video metadata extraction ─────────────────────────────────────────
-
-export interface VideoMetadata {
-  duration: number;
-  width: number;
-  height: number;
-  hasAudio: boolean;
-}
-
-export function getVideoMetadata(file: File): Promise<VideoMetadata> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    const url = URL.createObjectURL(file);
-    video.src = url;
-
-    video.onloadedmetadata = () => {
-      // Detect audio tracks
-      const v = video as any;
-      let hasAudio: boolean;
-      if (typeof v.mozHasAudio === "boolean") {
-        hasAudio = v.mozHasAudio;
-      } else if (typeof v.webkitAudioDecodedByteCount === "number") {
-        hasAudio = v.webkitAudioDecodedByteCount > 0;
-      } else if (v.audioTracks && typeof v.audioTracks.length === "number") {
-        hasAudio = v.audioTracks.length > 0;
-      } else {
-        // Assume video files have audio unless proven otherwise
-        hasAudio = true;
-      }
-      resolve({
-        duration: video.duration,
-        width: video.videoWidth,
-        height: video.videoHeight,
-        hasAudio,
-      });
-      URL.revokeObjectURL(url);
-    };
-
-    video.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Failed to load video metadata"));
-    };
-  });
-}
-
-export function getAudioDuration(file: File): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const audio = document.createElement("audio");
-    audio.preload = "metadata";
-    const url = URL.createObjectURL(file);
-    audio.src = url;
-
-    audio.onloadedmetadata = () => {
-      resolve(audio.duration);
-      URL.revokeObjectURL(url);
-    };
-
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Failed to load audio metadata"));
-    };
-  });
-}
+//
+// `getVideoMetadata` and `getAudioDuration` lived here, built on `<video>` and
+// `<audio>` elements loaded from an object URL. They were the last of the
+// pre-rewrite media path and a second source of truth about every file: the
+// duration came from the element, the dimensions from `videoWidth`, and
+// `hasAudio` from `mozHasAudio` / `webkitAudioDecodedByteCount`, which Chromium
+// leaves at 0 until something has actually played — so a file with sound
+// imported as silent, and the mixer showed it no channel.
+//
+// The media engine's `probeMedia` demuxes the container and asks each track
+// `canDecode()`, which answers all four questions properly and in one pass.
+// `stores/media-store.ts` calls it through `mediaEngine.openBlob`, which has
+// to happen at import anyway — see `describeThroughEngine` there.
 
 // ── IndexedDB for persisting directory handles ────────────────────────
 

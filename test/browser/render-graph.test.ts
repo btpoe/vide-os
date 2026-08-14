@@ -622,3 +622,66 @@ describe("burned-in captions", () => {
     if (last.kind === "layer") expect(last.layer.source.type).toBe("subtitle");
   });
 });
+
+describe("a frame the decoder has not caught up with", () => {
+  /**
+   * The preview never waits — that is what stops renders overlapping — so the
+   * render pass has to have an answer for "nothing is ready yet". It used to
+   * clear the accumulator up front and present regardless, which meant every
+   * such pass put a black frame on screen. `renderLayer` returning false was
+   * documented as leaving the accumulator "untouched"; untouched already meant
+   * cleared, so the protection was illusory for a single-layer scene.
+   */
+
+  it("holds the last picture rather than presenting a hole", async () => {
+    await setUp((d) => {
+      const track = videoTrack(d);
+      edits.insertClip(d, track.id, { type: "asset", assetId: ASSET_ID }, FRAMES, {
+        startFrame: 0,
+        mode: "overwrite",
+      });
+    });
+
+    const comp = createCompositor(canvas())!;
+    await warm(10);
+    expect(renderFrame(comp, 10)).toBe(true);
+    const drawn = readback(comp).meanLuma();
+    expect(drawn, "the fixture should render as something").toBeGreaterThan(4);
+
+    // Nothing decoded for this pass, and nothing earlier to stand in either.
+    const complete = renderFrame(comp, 20, () => null);
+
+    expect(complete, "the pass should report that it drew nothing").toBe(false);
+    expect(
+      readback(comp).meanLuma(),
+      "the previous picture should still be presented",
+    ).toBeCloseTo(drawn, 1);
+
+    disposeCompositor(comp);
+  });
+
+  it("still clears for a scene with nothing in it", async () => {
+    // The one case where "nothing drew" does not mean "not ready yet": a gap in
+    // the timeline is legitimately black, and holding the previous clip's last
+    // frame across it would be worse than the bug being fixed.
+    await setUp((d) => {
+      const track = videoTrack(d);
+      edits.insertClip(d, track.id, { type: "asset", assetId: ASSET_ID }, 20, {
+        startFrame: 0,
+        mode: "overwrite",
+      });
+    });
+
+    const comp = createCompositor(canvas())!;
+    await warm(10);
+    renderFrame(comp, 10);
+    expect(readback(comp).meanLuma()).toBeGreaterThan(4);
+
+    // Past the end of the only clip.
+    expect(buildScene(doc(), 30).nodes.length).toBe(0);
+    expect(renderFrame(comp, 30)).toBe(true);
+    expect(readback(comp).meanAlpha()).toBe(0);
+
+    disposeCompositor(comp);
+  });
+});

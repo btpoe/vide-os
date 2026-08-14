@@ -4,20 +4,20 @@ import {
   getMediaType,
   getDecodeSupport,
   getFileFromHandle,
-  generateVideoThumbnail,
   generateImageThumbnail,
-  getVideoMetadata,
-  getAudioDuration,
   saveFileHandle,
   loadAllFileHandles,
   removeFileHandle,
   verifyFilePermission,
   requestFilePermission,
 } from "@/lib/fs-access";
+import { clearAllFilmstrips, clearFilmstrip, posterFrame } from "@/lib/clip-thumbnails";
+import { clearAllWaveforms, clearWaveform } from "@/lib/waveform-cache";
 import { computeContentKey } from "@/model/ids";
+import { mediaEngine } from "@/media/engine";
 import { platform, type FileRef } from "@/platform";
 import { registerAsset } from "@/stores/project-store";
-import type { Asset, AssetKind } from "@/model/doc";
+import type { Asset, AssetKind, AssetProblem } from "@/model/doc";
 
 export interface MediaEntry {
   id: string;
@@ -38,6 +38,15 @@ export interface MediaEntry {
   width?: number;
   height?: number;
   hasAudio?: boolean;
+  /**
+   * What the demuxer found wrong with the file, once it has been probed.
+   *
+   * Absent until then, which is not the same as "nothing wrong" — see
+   * `syncAssetToDocument`, which falls back to the extension guess in the gap.
+   */
+  problem?: AssetProblem;
+  /** Whether the demuxer has been asked. Distinguishes "no problem" from "not yet". */
+  probed?: boolean;
   importing?: boolean;
 }
 
@@ -84,7 +93,13 @@ function syncAssetToDocument(entry: MediaEntry): void {
     hasAudio: entry.hasAudio ?? false,
   };
 
-  if (getDecodeSupport(entry.name) === "needs-conversion") {
+  // The probe is the real answer — it asked this browser about this file's
+  // actual codecs. The extension guess only stands in for the moment between
+  // the entry appearing and the demuxer having read it, so that a `.mkv`
+  // dropped on the timeline is not silently accepted in the meantime.
+  if (entry.problem) {
+    asset.problem = entry.problem;
+  } else if (!entry.probed && getDecodeSupport(entry.name) === "needs-conversion") {
     asset.problem = {
       kind: "unsupported-codec",
       detail: `${entry.name.split(".").pop()?.toUpperCase() ?? "This format"} is not decodable in the browser. Convert it to MP4 or WebM first.`,
@@ -92,6 +107,54 @@ function syncAssetToDocument(entry: MediaEntry): void {
   }
 
   registerAsset(asset);
+}
+
+/**
+ * The file's own account of itself, and the engine's copy of it.
+ *
+ * Two things happen here, and they belong together. The file is opened in the
+ * media engine — which is what was missing: `DecoderPool` looks the asset up in
+ * that registry, and nothing but relinking ever put anything in it, so every
+ * imported clip decoded to nothing and the preview stayed black. And the probe
+ * it returns becomes the single source of truth for duration, dimensions and
+ * audio, replacing a `<video>` element that guessed all three — `hasAudio` from
+ * `webkitAudioDecodedByteCount`, which is 0 until something has played, so a
+ * file with sound imported as silent.
+ *
+ * Images are not containers and have no demuxer; they keep their defaults.
+ */
+async function describeThroughEngine(
+  id: string,
+  file: File | Blob,
+  type: MediaType,
+): Promise<Partial<MediaEntry>> {
+  if (type === "image") return { probed: true };
+
+  try {
+    const { probe } = await mediaEngine.openBlob(id, file);
+    return {
+      probed: true,
+      duration: probe.durationSec > 0 ? probe.durationSec : undefined,
+      width: probe.video?.width,
+      height: probe.video?.height,
+      hasAudio: probe.audio !== null,
+      problem: probe.problem,
+    };
+  } catch (error) {
+    // `probeMedia` does not throw for a bad file — it reports a problem — so
+    // reaching here means the bytes could not be read at all.
+    return {
+      probed: true,
+      hasAudio: false,
+      problem: {
+        kind: "decode-failed",
+        detail:
+          error instanceof Error
+            ? `Could not read this file: ${error.message}`
+            : "Could not read this file.",
+      },
+    };
+  }
 }
 
 /**
@@ -119,14 +182,39 @@ export function updateMediaEntry(id: string, updates: Partial<MediaEntry>): void
   setMediaState("entries", (e) => e.id === id, updates);
 }
 
+/**
+ * Releases a poster URL.
+ *
+ * Posters are object URLs now that they come from a decoded frame rather than a
+ * `<video>` element's `toDataURL`. A data URL needs no cleanup; an object URL
+ * holds its blob until it is revoked, so dropping an entry without this leaks the
+ * image for the life of the page.
+ */
+function releasePoster(url: string | undefined): void {
+  if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+}
+
+/**
+ * Drops an entry and everything derived from it.
+ *
+ * The decorations go too — a filmstrip also holds an object URL. Their persisted
+ * copies in OPFS stay: those are keyed by content, so re-importing the same file
+ * draws its decorations immediately rather than decoding again.
+ */
 export function removeMediaEntry(id: string): void {
+  releasePoster(mediaState.entries.find((e) => e.id === id)?.thumbnailUrl);
   setMediaState("entries", (prev) => prev.filter((e) => e.id !== id));
   removeFileHandle(id).catch(() => {});
+  clearWaveform(id);
+  clearFilmstrip(id);
 }
 
 export function clearMedia(): void {
+  for (const entry of mediaState.entries) releasePoster(entry.thumbnailUrl);
   setMediaState("entries", []);
   setMediaState("selectedIds", []);
+  clearAllWaveforms();
+  clearAllFilmstrips();
 }
 
 export function setDirectoryHandle(handle: FileSystemDirectoryHandle | null): void {
@@ -184,48 +272,42 @@ export async function importFileHandle(
 
   saveFileHandle(id, handle).catch(() => {});
 
-  // Generate thumbnail and metadata in background
-  try {
-    let thumbnailUrl: string | undefined;
-    let duration: number | undefined;
-    let width: number | undefined;
-    let height: number | undefined;
-    let hasAudio: boolean | undefined;
-
-    if (mediaType === "video") {
-      const [thumb, meta] = await Promise.all([
-        generateVideoThumbnail(file).catch(() => undefined),
-        getVideoMetadata(file).catch(() => undefined),
-      ]);
-      thumbnailUrl = thumb;
-      if (meta) {
-        duration = meta.duration;
-        width = meta.width;
-        height = meta.height;
-      }
-      hasAudio = meta?.hasAudio ?? true;
-    } else if (mediaType === "image") {
-      thumbnailUrl = await generateImageThumbnail(file).catch(() => undefined);
-    } else if (mediaType === "audio") {
-      duration = await getAudioDuration(file).catch(() => undefined);
-      hasAudio = true;
-    }
-
-    updateMediaEntry(id, {
-      thumbnailUrl,
-      duration,
-      width,
-      height,
-      hasAudio,
-      importing: false,
-    });
-    // The document needs the duration to clamp clips to the source.
-    syncAssetToDocument({ ...entry, duration, width, height, hasAudio });
-  } catch {
-    updateMediaEntry(id, { importing: false });
-  }
+  await ingest(entry, file);
 
   return mediaState.entries.find((e) => e.id === id) ?? entry;
+}
+
+/**
+ * Opens an entry's file and fills in everything derived from it.
+ *
+ * Shared by import and restore, which had two copies of this and would have
+ * needed a third for the permission re-grant. The copies were identical, which
+ * is the only reason the missing engine registration was one bug rather than
+ * three subtly different ones.
+ *
+ * Nothing here throws: an entry that cannot be described still exists in the
+ * pool, carrying whatever the probe managed to say about why.
+ */
+async function ingest(entry: MediaEntry, file: File | Blob): Promise<void> {
+  try {
+    const [thumbnailUrl, described] = await Promise.all([
+      entry.type === "video"
+        ? posterFrame(file).then(
+            (url) => url ?? undefined,
+            () => undefined,
+          )
+        : entry.type === "image"
+          ? generateImageThumbnail(file).catch(() => undefined)
+          : Promise.resolve(undefined),
+      describeThroughEngine(entry.id, file, entry.type),
+    ]);
+
+    updateMediaEntry(entry.id, { ...described, thumbnailUrl, importing: false });
+    // The document needs the duration to clamp clips to the source.
+    syncAssetToDocument({ ...entry, ...described, thumbnailUrl });
+  } catch {
+    updateMediaEntry(entry.id, { importing: false });
+  }
 }
 
 /**
@@ -282,47 +364,9 @@ export async function restoreMedia(): Promise<void> {
       addMediaEntry(entry);
       syncAssetToDocument(entry);
 
-      // Generate thumbnail and metadata in background (don't await — let them load in parallel)
-      void (async () => {
-        try {
-          let thumbnailUrl: string | undefined;
-          let duration: number | undefined;
-          let width: number | undefined;
-          let height: number | undefined;
-          let hasAudio: boolean | undefined;
-
-          if (mediaType === "video") {
-            const [thumb, meta] = await Promise.all([
-              generateVideoThumbnail(file).catch(() => undefined),
-              getVideoMetadata(file).catch(() => undefined),
-            ]);
-            thumbnailUrl = thumb;
-            if (meta) {
-              duration = meta.duration;
-              width = meta.width;
-              height = meta.height;
-            }
-            hasAudio = meta?.hasAudio ?? true;
-          } else if (mediaType === "image") {
-            thumbnailUrl = await generateImageThumbnail(file).catch(() => undefined);
-          } else if (mediaType === "audio") {
-            duration = await getAudioDuration(file).catch(() => undefined);
-            hasAudio = true;
-          }
-
-          updateMediaEntry(mediaId, {
-            thumbnailUrl,
-            duration,
-            width,
-            height,
-            hasAudio,
-            importing: false,
-          });
-          syncAssetToDocument({ ...entry, duration, width, height, hasAudio });
-        } catch {
-          updateMediaEntry(mediaId, { importing: false });
-        }
-      })();
+      // Not awaited: restore is a loop over every stored handle, and each
+      // file's probe and poster should overlap rather than queue.
+      void ingest(entry, file);
     }
 
     setMediaState("pendingPermission", needsPermission);
@@ -362,6 +406,9 @@ export async function reconnectPendingMedia(): Promise<number> {
       };
       addMediaEntry(entry);
       syncAssetToDocument(entry);
+      // A re-granted file is as new to the engine as an imported one. Without
+      // this the media came back in the pool and stayed blank on the timeline.
+      await ingest(entry, file);
       reconnected++;
     } catch {
       stillPending.push(item);

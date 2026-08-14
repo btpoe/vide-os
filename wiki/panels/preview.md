@@ -113,6 +113,17 @@ Scaling render targets buys GPU fill rate, and GPU time is invisible to
 `performance.now()` around a GL call — the calls return promptly and the next
 animation frame simply arrives late instead.
 
+The two are measured against **different** budgets, and this matters. A render
+must fit inside one frame of the _display_, because one that overruns stalls the
+compositor. But the interval is measured against one frame of the _sequence_:
+the loop draws only when the sequence frame under the playhead changes, so on a
+30 fps timeline consecutive renders are 33 ms apart by design, on any machine,
+however idle. Measuring that gap against the display's 16.7 ms made every frame
+of every sequence slower than the refresh rate count as a strike — so playback
+collapsed to the bottom rung within a third of a second and could never climb
+back. A 1080p timeline previewed at 240×135 while the renderer sat at 6 ms of a
+16.7 ms budget.
+
 A frame that lands in between the two thresholds is neither a strike nor a
 credit. Counting a near-miss as credit is what walks a ladder up into a stutter
 and straight back down, and that shimmer is what makes adaptive resolution read
@@ -120,7 +131,28 @@ as a rendering bug.
 
 You can watch the ladder work: press `Shift+D` for the
 [Debug HUD](dialogs.md#debug-hud), which shows the current rung, the render
-time, the frame interval and the dropped-frame count.
+time, the frame interval, the dropped-frame count and the held-frame count.
+
+---
+
+## A frame the decoder has not caught up with
+
+The render pass never waits — that is what keeps one render in flight at a time
+— so it needs an answer for "nothing is decoded yet". The answer is to **hold
+the picture already on screen**: the frame is late, not gone.
+
+- If a decoded frame exists for the position, it is drawn.
+- If not, the nearest _earlier_ decoded frame stands in.
+- If there is no earlier frame either — jumping backwards past everything in the
+  cache is the usual way to reach this — the previous picture stays up
+  unchanged, and the pass is counted as **held** rather than rendered.
+- A scene with **nothing in it** is the one exception. A gap in the timeline is
+  legitimately black and clears, because holding the previous clip's last frame
+  across a gap would be worse than the flicker this rule removes.
+
+Before this, the pass cleared its accumulator up front and presented whatever
+survived, so every not-yet-decoded frame put a black frame on screen — which
+during playback and scrubbing reads as the preview flickering.
 
 ---
 

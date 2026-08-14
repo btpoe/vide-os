@@ -91,8 +91,11 @@ export function formatChord(spec: string): string {
     ArrowRight: "→",
     ArrowUp: "↑",
     ArrowDown: "↓",
-    Delete: "⌫",
-    Backspace: "⌫",
+    // Two different keys, and the shortcut sheet lists both, so they cannot
+    // share a glyph — ⌫ is Backspace and ⌦ is forward delete. Only on macOS:
+    // elsewhere the keys are labelled with the words, and printing Mac glyphs
+    // on a Windows keyboard is a puzzle rather than a reference.
+    ...(isMac ? { Delete: "⌦", Backspace: "⌫" } : {}),
     Space: "Space",
     Home: "Home",
     End: "End",

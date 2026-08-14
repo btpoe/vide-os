@@ -25,9 +25,10 @@ region — see [Developer ▸ Panels API](../developer/panels.md).
 The arrangement lives in `localStorage`, not in the project file. It follows the
 browser, not the edit.
 
-**Known limitation:** the docking layout has no keyboard navigation. It is a
-custom shadow-DOM layout and an accessibility pass is a scheduled item on the
-[Roadmap](../roadmap.md).
+The layout is navigable from the keyboard: `←` / `→` and `Home` / `End` move
+between tabs, `Delete` closes the focused panel, and a focused splitter resizes
+with the arrow keys (`⇧` for larger steps). Tab bars are `tablist`s with a
+roving tabindex; splitters are `separator`s carrying `aria-valuenow`.
 
 ---
 

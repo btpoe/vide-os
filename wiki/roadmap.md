@@ -2,16 +2,15 @@
 
 What is planned, what is deliberately refused, and where help is most useful.
 
-This page tracks [`docs/plan.md`](../docs/plan.md) and
-[`docs/findings.md`](../docs/findings.md). Where they disagree, they are right
-and this page is out of date.
+This page tracks the phase plan and the engineering log kept in the repository.
+Where they disagree with it, they are right and this page is out of date.
 
 ---
 
 ## Where the project is
 
-Phases 0–6 are delivered, plus the decoration and preview-quality work that was
-pulled forward out of Phase 8.
+Phases 0–6 and Phase 8 are delivered. Phase 7, the desktop shell, is what is
+left.
 
 | Delivered                                                                                                                                                                          |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -23,8 +22,10 @@ pulled forward out of Phase 8.
 | Deterministic export with real codec negotiation and streaming to disk                                                                                                             |
 | Ripple / roll / slip / slide, clipboard, retime, markers with chapter export, subtitles with SRT/VTT, three-point editing with a source monitor, OPFS autosave with crash recovery |
 | Waveform mip pyramids analysed in a worker and cached to OPFS; filmstrip sprite sheets; adaptive preview quality ladder; debug HUD                                                 |
+| A keyboard-navigable panel system, and dialogs that are announced, close on Escape, trap focus and give it back                                                                    |
 
-Roughly 580 tests. Typecheck, lint, format and build green in CI.
+638 tests (439 unit, 196 browser, 3 perf). Typecheck, lint, format, perf budgets
+and build green in CI.
 
 ---
 
@@ -55,26 +56,39 @@ changing shape.
 
 ---
 
-## Phase 8 — Hardening
+## Phase 8 — Hardening — done
 
-Most of this landed early. What remains:
+| Item                                                                                                       | State     |
+| ---------------------------------------------------------------------------------------------------------- | --------- |
+| ~~Cap the preview base by the displayed canvas~~                                                           | ✓ Done    |
+| ~~CI-enforced perf budgets~~ — scene build under 2 ms at 1000 clips, a preview frame under a display frame | ✓ Done    |
+| ~~Accessibility pass on the panel system~~                                                                 | ✓ Done    |
+| ~~Onboarding~~ — a short orientation document, an in-app Getting Started, and this wiki                    | ✓ Done    |
+| ~~Debug HUD~~                                                                                              | ✓ Done    |
+| ~~Preview quality ladder~~                                                                                 | ✓ Done    |
+| ~~Waveform and thumbnail rewrite~~                                                                         | ✓ Done    |
+| ~~Decide the worker question explicitly~~                                                                  | ✓ Decided |
+| ~~Join tests: mount a panel, put a clip down, assert a picture appears~~                                   | ✓ Done    |
 
-| Item                                                                                                              | State                   |
-| ----------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| **CI-enforced perf budgets** — scene build under 2 ms at 1000 clips, preview frame under 16 ms at half resolution | Not started             |
-| **Cap the preview base by the displayed canvas**, or measure that it does not matter                              | Deferred, deliberately  |
-| **Accessibility pass on the panel system** — it has no keyboard navigation at all                                 | Not started             |
-| **Onboarding and the rest of `docs/`**                                                                            | In progress — this wiki |
-| ~~Debug HUD~~                                                                                                     | ✓ Done                  |
-| ~~Preview quality ladder~~                                                                                        | ✓ Done                  |
-| ~~Waveform and thumbnail rewrite~~                                                                                | ✓ Done                  |
-| ~~Decide the worker question explicitly~~                                                                         | ✓ Decided               |
-| ~~Join tests: mount a panel, put a clip down, assert a picture appears~~                                          | ✓ Done                  |
+The perf budgets run in CI with a `VITE_PERF_ALLOWANCE` multiplier — 3× on the
+Node suite, 5× on the browser one, where the runner has no GPU and Chromium
+falls back to software rasterization. Relaxed rather than removed: it still
+catches a frame that has started costing an order of magnitude more than it did.
 
-The preview base cap is deferred rather than forgotten: a 4K project renders
-1920×1080 targets into a canvas that may be 600 px wide, and the ladder only
-reclaims that under load. The existing code argues against reallocating on every
-splitter drag, and that trade-off deserves a measurement rather than a guess.
+The accessibility pass gave the docking layout real `tablist` and `separator`
+semantics with keyboard navigation, and made the shortcut sheet generated from
+the command registry so it cannot drift.
+
+The preview base is capped by the displayed canvas: a 4K project used to render
+1920×1080 targets into a canvas that might be 600 px wide, and the quality ladder
+only reclaimed that under load — which a parked playhead never is. The cap is a
+discrete ladder with a dead band, so dragging a splitter crosses a step at most
+once rather than reallocating render targets on every pointer move.
+
+**Phase 8c** then cleared the open items, and the smallest of them turned out to
+be the largest defect in the project's history: nothing but relinking ever opened
+an imported file in the media engine, so no clip the application itself imported
+could decode a frame. The full account is in the engineering log.
 
 ---
 
@@ -86,8 +100,6 @@ Each of these is a known, recorded gap rather than an oversight.
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Retime does not preserve pitch**             | A slowed clip sounds lower. Web Audio resamples and offers no `preservesPitch` on a buffer source, so this needs a time-stretcher (WSOLA or a phase vocoder) sharing one code path with the offline render, as the rest of the audio graph does. Deliberately not faked with a checkbox in the meantime. |
 | **Subtitle parsing has never met a real file** | The SRT/VTT fixtures are hand-written to cover the cases known to break. That is not the same as a file from Premiere, Rev, YouTube or a fansub group. Needs a pass with real files.                                                                                                                     |
-| **Two sources of truth about media**           | `getVideoMetadata` in the import path is still an old `<video>`-based sniffer, so `hasAudio` in the media pool is guessed rather than probed. Harmless today; still two answers to one question.                                                                                                         |
-| **Menu hover-then-click bug**                  | Hovering across the menu bar while a menu is open switches menus; the subsequent click then toggles it shut. Cosmetic, pre-existing.                                                                                                                                                                     |
 | **No Playwright E2E tier**                     | And still the right call for everything except "import a file through the OS picker", which no browser-mode test can cover.                                                                                                                                                                              |
 | **Licence not chosen**                         | A genuine open question that needs settling. See [Contributing](contributing.md#licence).                                                                                                                                                                                                                |
 
@@ -97,6 +109,46 @@ Each of these is a known, recorded gap rather than an oversight.
 
 Not scheduled and not committed to — but consistent with the project's direction,
 and the sort of thing a contributor could reasonably take on.
+
+### Colour grading
+
+**Not built.** Nothing in `src/` grades today; the colour controls are the
+`brightness_contrast`, `saturation` and `hue_rotate` effects in the existing
+chain, and there is nothing to measure a picture against.
+
+This was previously listed as a refusal — "a grading suite is its own product" —
+and that refusal has been withdrawn. What has not changed is the reason behind
+it: a full grading suite, with secondaries, qualifiers and tracked windows, is a
+different product and would drag in the masking and tracking that remain
+refused. What changed is the judgement that _primary_ correction is not that
+product. It is a handful of shader passes and a measurement panel, and an editor
+that cannot match two shots from the same shoot is missing something ordinary
+rather than something specialist.
+
+The shape it would take, and the reason it is a fit rather than a new subsystem:
+
+| Piece                                                         | Where it lands                                                                                                         |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Lift / gamma / gain, temperature and tint, saturation, curves | `EFFECT_DEFINITIONS` — keyframable for free, and already composited by the same graph the export uses                  |
+| Scopes: waveform, vectorscope, histogram, RGB parade          | A new panel reading the composite framebuffer, the way the Preview already does rather than reading the preview canvas |
+| Colour pickers for `vec3` uniforms                            | Listed under the smaller items below; a prerequisite, not a separate feature                                           |
+
+Open questions a serious proposal would have to answer:
+
+- **Where in the chain a grade sits.** Effects are an ordered list per clip
+  today. A grade that has to run before or after every other effect is an
+  ordering rule the model does not have.
+- **Whether grading needs more than 8-bit.** The graph's render targets are
+  `RGBA8`. Stacked corrections band on a gradient, and moving to `RGBA16F`
+  is a change to every pass and to the export path, not to one shader.
+- **What the scopes measure.** Reading back a framebuffer every frame on the
+  preview's hot path is exactly the kind of stall the quality ladder exists to
+  avoid. It probably has to be a downscaled, throttled read, and the panel has to
+  say so rather than implying a per-frame measurement it is not making.
+- **Track- or project-level grades.** Out of scope for a first pass; per-clip
+  only. Anything else is a document-model change.
+
+Nothing here is scheduled. Phase 7, the desktop shell, is still next.
 
 ### A plugin loader
 
@@ -118,16 +170,15 @@ code from a plugin can be trusted to a GL context shared with the editor.
 
 Each of these is a plausible first contribution:
 
-| Item                                        | Notes                                                                                  |
-| ------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Track faders in the Mixer                   | The audio graph already has per-track gain and pan nodes. Wiring, not architecture.    |
-| Colour pickers for `vec3` effect uniforms   | Would let the chroma key's key colour be exposed, which it currently is not.           |
-| An effect preset or copy-chain mechanism    | There is no way to move an effect chain between clips other than duplicating the clip. |
-| Frame stepping in the Source monitor        | It has a scrubber and mark keys, and nothing else.                                     |
-| A light theme                               | The token set exists; nothing hard-codes colours.                                      |
-| Safe-area and guide overlays in the Preview |                                                                                        |
-| Waveform overlay on video clips             | A scope decision, not a wiring one: it means analysing audio for every video clip.     |
-| Making the in-app shortcut sheet generated  | It is hand-written and already wrong in two places; the registry has the truth.        |
+| Item                                        | Notes                                                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Track faders in the Mixer                   | The audio graph already has per-track gain and pan nodes. Wiring, not architecture.                                    |
+| Colour pickers for `vec3` effect uniforms   | Would let the chroma key's key colour be exposed, which it currently is not. Also a prerequisite for grading controls. |
+| An effect preset or copy-chain mechanism    | There is no way to move an effect chain between clips other than duplicating the clip.                                 |
+| Frame stepping in the Source monitor        | It has a scrubber and mark keys, and nothing else.                                                                     |
+| A light theme                               | The token set exists; nothing hard-codes colours.                                                                      |
+| Safe-area and guide overlays in the Preview |                                                                                                                        |
+| Waveform overlay on video clips             | A scope decision, not a wiring one: it means analysing audio for every video clip.                                     |
 
 ---
 
@@ -139,7 +190,6 @@ place", not from "it would be nice".
 
 | Not doing                                | Why                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Colour scopes and grading wheels**     | A grading suite is its own product. VideOS gives you an effects chain.                                                                                                                                                                                                                                                         |
 | **Masks and motion tracking**            | Compositing depth belongs in a compositor.                                                                                                                                                                                                                                                                                     |
 | **Nested sequences, multicam**           | Enormous surface area, narrow audience, deep consequences for the document model.                                                                                                                                                                                                                                              |
 | **EDL / OTIO interchange**               | Worth doing eventually; not what stops anyone editing today.                                                                                                                                                                                                                                                                   |
@@ -154,14 +204,15 @@ place", not from "it would be nice".
 
 1. **Real-world files** — subtitles especially, but also odd footage. See
    [Contributing](contributing.md#1-use-it-and-report-what-breaks).
-2. **The accessibility pass.** Self-contained, badly needed, and nobody has
-   started it.
-3. **Perf budgets in CI.** The counters already exist; nothing asserts on them.
-4. **Effects.** Adding one is appending an object with a fragment shader to a
+2. **Effects.** Adding one is appending an object with a fragment shader to a
    registry.
+3. **A screen-reader pass over panel _contents_.** The docking layout itself is
+   now navigable; the panels inside it have had no audit.
+4. **Keeping the wiki true.** Every change to the app should update it in the
+   same commit — see [`CLAUDE.md`](../CLAUDE.md).
 5. **The licence conversation.**
 
 ---
 
-**See also:** [`docs/plan.md`](../docs/plan.md) ·
-[`docs/findings.md`](../docs/findings.md) · [Contributing](contributing.md)
+**See also:** [Contributing](contributing.md) ·
+[Developer Guide](developer/README.md)

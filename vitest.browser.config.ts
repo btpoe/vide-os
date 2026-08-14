@@ -17,6 +17,15 @@ export default defineConfig({
   },
   test: {
     include: ["test/browser/**/*.test.{ts,tsx}"],
+    /**
+     * Ignored in browser mode — a real Chromium provides the environment — but
+     * it must still name a package Vitest can resolve. Left unset it resolved
+     * to `jsdom`, which is not installed and does not need to be, and Vitest
+     * set the exit code to 1 before running anything. Every browser run
+     * reported "160 passed" and then failed, so the browser CI job had been
+     * red, and unable to gate anything, for as long as it had existed.
+     */
+    environment: "node",
     browser: {
       enabled: true,
       provider: playwright(),

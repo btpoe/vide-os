@@ -478,22 +478,43 @@ function compositeOver(
  *
  * Synchronous throughout: a layer whose frame is not decoded is skipped, never
  * waited for.
+ *
+ * Returns whether the presented picture is *this* frame's. False means nothing
+ * the scene asked for was decoded yet and the previous picture is still on
+ * screen, which the preview scheduler counts rather than mistaking for a draw.
  */
 export function composeFrame(
   graph: GraphContext,
   scene: Scene,
   resolve: ImageResolver,
-): void {
-  if (graph.disposed) return;
+): boolean {
+  if (graph.disposed) return false;
   const { gl, width, height } = graph;
 
-  // Start from fully transparent; the present pass puts it over black.
-  graph.accumulatorIndex = 0;
-  clearTo(gl, graph.accumulators[0].fbo, width, height);
+  /**
+   * Clears the accumulator, the first time something is ready to draw into it.
+   *
+   * Deferred rather than done up front, which is the whole fix: clearing before
+   * resolving and then presenting whatever survived meant a frame the decoder
+   * had not caught up with was presented as a hole — a black flash mid-playback,
+   * every time. `renderLayer` returning false was supposed to "leave the
+   * accumulator untouched", but untouched already meant cleared. Holding the
+   * previous picture is what a late frame should look like: the picture is
+   * late, not gone.
+   */
+  let drew = false;
+  const beginComposite = (): void => {
+    if (drew) return;
+    drew = true;
+    // Fully transparent; the present pass puts it over black.
+    graph.accumulatorIndex = 0;
+    clearTo(gl, graph.accumulators[0].fbo, width, height);
+  };
 
   for (const node of scene.nodes) {
     if (node.kind === "layer") {
       if (renderLayer(graph, node.layer, resolve, graph.layerBuffer)) {
+        beginComposite();
         compositeOver(
           graph,
           graph.layerBuffer.texture,
@@ -511,6 +532,7 @@ export function composeFrame(
     const hasTo = renderLayer(graph, node.to, resolve, bufferB);
 
     if (hasFrom && hasTo) {
+      beginComposite();
       clearTo(gl, graph.layerBuffer.fbo, width, height);
       gl.viewport(0, 0, width, height);
       renderTransition(
@@ -532,11 +554,22 @@ export function composeFrame(
       // picture entirely mid-transition.
       const available = hasFrom ? bufferA : bufferB;
       const layer = hasFrom ? node.from : node.to;
+      beginComposite();
       compositeOver(graph, available.texture, layer.opacity, layer.blend);
     }
   }
 
+  // A scene with nothing in it — a gap in the timeline, or an empty project —
+  // is legitimately black, and must clear rather than hold the last picture.
+  // That is the one case "nothing drew" does not mean "not ready yet".
+  const empty = scene.nodes.length === 0;
+  if (empty && !drew) {
+    graph.accumulatorIndex = 0;
+    clearTo(gl, graph.accumulators[0].fbo, width, height);
+  }
+
   present(graph);
+  return drew || empty;
 }
 
 /** Blits the accumulator to the canvas. */

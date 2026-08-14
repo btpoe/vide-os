@@ -112,15 +112,25 @@ see the [Roadmap](../roadmap.md).
 
 ---
 
-## Known rough edge
+## What importing actually does
 
-`getVideoMetadata` in the import path is still an older `<video>`-element
-sniffer, so `hasAudio` in the pool is guessed rather than probed. It is harmless
-today — the audio engine asks the media engine directly — but it is two sources
-of truth about the same file, and it is tracked as an open item.
+Importing a file **opens it in the media engine**, and everything the pool shows
+about it comes from that one probe: duration, source dimensions, whether there
+is an audio track, and whether this browser can decode either track.
+
+That is one step doing two jobs on purpose. The engine's registry is where the
+decoder pool looks up a clip's demuxer, so a file that has not been opened there
+cannot be decoded at all — and for a long time nothing but relinking ever opened
+one, which meant every imported clip rendered black while its thumbnail and
+waveform, which open their own demuxers, appeared perfectly.
+
+The metadata was previously read from a `<video>` element, which was a second
+source of truth and a worse one. `hasAudio` came from
+`webkitAudioDecodedByteCount`, which is `0` until something has actually played,
+so a file with sound imported as silent and the mixer offered it no channel.
 
 Source: `src/panels/MediaPoolPanel.tsx`, `src/stores/media-store.ts`,
-`src/media/probe.ts`, `src/model/ids.ts`.
+`src/media/probe.ts`, `src/media/asset-registry.ts`, `src/model/ids.ts`.
 
 ---
 

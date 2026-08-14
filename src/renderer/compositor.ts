@@ -134,20 +134,23 @@ function makeResolver(
  *
  * Synchronous. A layer whose frame is not yet decoded is skipped for this pass
  * rather than awaited, which is what stops renders overlapping.
+ *
+ * Returns false when nothing the scene asked for was ready, in which case the
+ * previous picture is still on screen rather than a black hole in its place.
  */
 export function renderFrame(
   comp: Compositor,
   frame: number,
   lookup: FrameLookup = previewLookup,
   document_: ProjectDoc = currentDoc(),
-): void {
-  if (comp.disposed) return;
+): boolean {
+  if (comp.disposed) return false;
 
   const scene = buildScene(document_, frame);
   const borrowed: Borrowed[] = [];
 
   try {
-    composeFrame(comp, scene, makeResolver(document_, scene, borrowed, lookup));
+    return composeFrame(comp, scene, makeResolver(document_, scene, borrowed, lookup));
   } finally {
     // In a finally so a GL error cannot pin frames in the cache forever.
     for (const frameRef of borrowed) frameRef.release();

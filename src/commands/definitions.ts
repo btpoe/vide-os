@@ -35,7 +35,8 @@ import {
   revealFrame,
 } from "@/stores/timeline-view-store";
 import { undo, redo, canUndo, canRedo } from "@/stores/history-store";
-import { setSelectedTool } from "@/stores/ui-store";
+import { setSelectedTool, toggleDebugHud, uiState } from "@/stores/ui-store";
+import { focusAdjacentPanel } from "@/web-components/panel-focus";
 import { insertFromSource, canEditFromSource } from "./source-edits";
 import { sourceAssetId, markIn, markOut } from "@/stores/source-store";
 import type { Command } from "./registry";
@@ -396,7 +397,43 @@ export const commands: Command[] = [
     category: "Tools",
     run: () => setSelectedTool("hand"),
   },
+
+  // ── View ───────────────────────────────────────────────────────────
+  {
+    // A plain letter, like the tools: the modifier combinations a HUD toggle
+    // would naturally want are all taken by the browser or the window manager,
+    // and a shortcut the page cannot receive is worse than no shortcut.
+    id: "view.toggleDebugHud",
+    label: "Debug HUD",
+    shortcut: "Shift+D",
+    category: "View",
+    run: toggleDebugHud,
+  },
+  {
+    // F6 is the platform convention for "move to the next pane", and the key a
+    // screen-reader user reaches for first. On a Mac laptop it may need Fn
+    // unless the function keys are set to behave as function keys — noted in
+    // the keyboard reference rather than worked around, because substituting a
+    // non-standard chord would cost every other platform the convention.
+    id: "view.focusNextPanel",
+    label: "Focus Next Panel",
+    shortcut: "F6",
+    category: "View",
+    run: () => focusAdjacentPanel(1),
+  },
+  {
+    id: "view.focusPreviousPanel",
+    label: "Focus Previous Panel",
+    shortcut: "Shift+F6",
+    category: "View",
+    run: () => focusAdjacentPanel(-1),
+  },
 ];
+
+/** Whether the debug HUD is on, for the menu's check mark. */
+export function isDebugHudShown(): boolean {
+  return uiState.showDebugHud;
+}
 
 /** Re-exported so panels can read selection state without importing the store. */
 export { timelineState };

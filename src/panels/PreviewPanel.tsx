@@ -1,4 +1,11 @@
-import { Component, onMount, onCleanup, createEffect, createSignal } from "solid-js";
+import {
+  Component,
+  onMount,
+  onCleanup,
+  createEffect,
+  createSignal,
+  Show,
+} from "solid-js";
 import { doc, playheadFrame, sequenceFrameRate } from "@/stores/project-store";
 import { contentEndFrame } from "@/model/doc";
 import { framesToTimecode } from "@/lib/timecode";
@@ -6,10 +13,16 @@ import {
   createCompositor,
   disposeCompositor,
   renderBlackFrame,
-  resizeCompositor,
   type Compositor,
 } from "@/renderer/compositor";
-import { startPreview, invalidatePreview } from "@/playback/scheduler";
+import {
+  startPreview,
+  invalidatePreview,
+  type PreviewScheduler,
+} from "@/playback/scheduler";
+import { baseSizeForScale, chooseBaseScale } from "@/playback/preview-quality";
+import { uiState } from "@/stores/ui-store";
+import DebugHud from "./DebugHud";
 import {
   isPlaying,
   pause,
@@ -20,34 +33,57 @@ import {
 } from "@/playback/transport";
 
 /**
- * How much smaller than the project the preview renders.
+ * The largest device pixel ratio worth rendering for.
  *
- * Half resolution is a reasonable default; the quality ladder that adapts this
- * to measured frame time lands with the render graph.
+ * Beyond 2 the extra pixels cost fill rate for a difference nobody has reported
+ * seeing in a moving picture.
  */
-const PREVIEW_SCALE = 0.5;
+const MAX_PIXEL_RATIO = 2;
 
 const PreviewPanel: Component = () => {
   let canvasRef: HTMLCanvasElement | undefined;
   let containerRef: HTMLDivElement | undefined;
   let compositor: Compositor | null = null;
-  let scheduler: { stop: () => void } | null = null;
   const [glReady, setGlReady] = createSignal(false);
+  /** A signal rather than a local, so the HUD can read it once it exists. */
+  const [scheduler, setScheduler] = createSignal<PreviewScheduler | null>(null);
 
   /**
-   * The size the preview renders at.
+   * Which of `BASE_SCALES` the preview renders at when nothing is under load.
    *
-   * A fraction of the project, and derived from the *sequence* rather than
-   * from the element: the canvas is scaled to fit by CSS, so making the buffer
-   * track the panel would re-allocate every render target on every drag of a
-   * splitter for no gain in what you can see.
+   * Held here rather than in the scheduler because it is a property of the
+   * panel — how big the picture is on screen — while the rung below it is
+   * scheduling policy. Moved only by the observer below, which is what keeps a
+   * splitter drag from reallocating render targets continuously.
    */
-  const previewSize = () => {
+  const [baseScale, setBaseScale] = createSignal(0);
+
+  /**
+   * The size the preview renders at with the playhead settled.
+   *
+   * The top of the quality ladder rather than a fixed size: the scheduler
+   * scales the render targets below this when a frame takes too long, and
+   * returns here whenever the playhead settles. The canvas buffer is this size,
+   * so a rung change reallocates render targets and not the drawing buffer, and
+   * the final blit presents the smaller picture upscaled.
+   */
+  const previewSize = () => baseSizeForScale(doc().sequence, baseScale());
+
+  /**
+   * How wide the picture is on screen, in device pixels.
+   *
+   * Measured from the container rather than the canvas: the canvas is sized by
+   * its own drawing buffer when no stylesheet applies, so measuring it would
+   * feed the buffer size back into the choice of buffer size and shrink away.
+   * `object-contain` is what makes this the fitted width rather than the box.
+   */
+  const displayedWidth = (rect: DOMRectReadOnly): number => {
     const sequence = doc().sequence;
-    return {
-      width: Math.max(2, Math.round(sequence.width * PREVIEW_SCALE)),
-      height: Math.max(2, Math.round(sequence.height * PREVIEW_SCALE)),
-    };
+    const fitted = Math.min(
+      rect.width,
+      (rect.height * sequence.width) / sequence.height,
+    );
+    return fitted * Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
   };
 
   onMount(() => {
@@ -67,25 +103,35 @@ const PreviewPanel: Component = () => {
 
     setGlReady(true);
     renderBlackFrame(compositor);
-    scheduler = startPreview(compositor);
+    // The panel owns the base size; the scheduler owns the rung below it, and
+    // therefore owns every call to `resizeCompositor`. Two owners of the render
+    // target size would fight each frame, one restoring what the other shrank.
+    setScheduler(startPreview(compositor, { baseSize: previewSize }));
 
     // Opening a project of a different resolution changes what the preview
     // should render at. The render loop cannot observe that on its own.
     createEffect(() => {
       const next = previewSize();
       if (!compositor || !canvasRef) return;
-      if (compositor.width === next.width && compositor.height === next.height) return;
+      if (canvasRef.width === next.width && canvasRef.height === next.height) return;
 
       canvasRef.width = next.width;
       canvasRef.height = next.height;
-      resizeCompositor(compositor, next.width, next.height);
       invalidatePreview(compositor);
     });
 
     // A CSS resize keeps the buffer but can drop what was presented, so the
-    // picture has to be drawn again.
+    // picture has to be drawn again — and it is also the only signal that the
+    // base size may now be wrong for the panel.
     if (containerRef) {
-      const observer = new ResizeObserver(() => {
+      const observer = new ResizeObserver(([entry]) => {
+        setBaseScale((current) =>
+          chooseBaseScale(
+            current,
+            doc().sequence.width,
+            displayedWidth(entry.contentRect),
+          ),
+        );
         if (compositor) invalidatePreview(compositor);
       });
       observer.observe(containerRef);
@@ -94,7 +140,7 @@ const PreviewPanel: Component = () => {
   });
 
   onCleanup(() => {
-    scheduler?.stop();
+    scheduler()?.stop();
     if (compositor) disposeCompositor(compositor);
   });
 
@@ -121,9 +167,15 @@ const PreviewPanel: Component = () => {
         class="flex-1 flex items-center justify-center p-2 min-h-0"
       >
         <div class="relative w-full h-full flex items-center justify-center">
+          {/*
+            Sized by CSS to fill the panel, with the drawing buffer fitted
+            inside it by `object-contain`. The buffer used to set the element
+            size, which meant a smaller buffer drew a smaller picture — and,
+            once the buffer followed the panel, would have shrunk itself away.
+          */}
           <canvas
             ref={canvasRef}
-            class="max-w-full max-h-full object-contain border border-border/30 rounded"
+            class="w-full h-full object-contain border border-border/30 rounded"
           />
           {!glReady() && (
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -132,6 +184,9 @@ const PreviewPanel: Component = () => {
               </span>
             </div>
           )}
+          <Show when={uiState.showDebugHud}>
+            <DebugHud preview={() => scheduler()?.stats() ?? null} />
+          </Show>
         </div>
       </div>
 

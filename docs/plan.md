@@ -36,9 +36,19 @@ What exists today:
 - Editing depth: ripple/roll/slip/slide, clipboard, retime, markers with
   chapter export, subtitles with SRT/VTT, three-point editing with a source
   monitor, OPFS autosave with crash recovery.
+- Timeline decorations rewritten: waveform peaks as a mip pyramid analysed in a
+  worker and cached to OPFS, filmstrip thumbnails through Mediabunny's
+  `CanvasSink`, and a preview quality ladder above both.
+- A panel system that can be driven from the keyboard, and dialogs that
+  announce themselves, close on Escape, and give focus back.
+- Performance budgets in CI, and a debug HUD showing what the engine is doing.
 
-532 tests (393 unit, 139 browser). Typecheck, lint, format, and build are green
-in CI.
+638 tests (439 unit, 196 browser, 3 perf). Typecheck, lint, format, unit tests,
+perf budgets, and build are green in CI — and so, for the first time, is the
+browser job, which had been exiting 1 while reporting every test as passed.
+
+Phases 0–6 and Phase 8 are delivered. Phase 7, the desktop shell, is what is
+left.
 
 ---
 
@@ -48,124 +58,113 @@ Work the earlier phases specified and did not deliver. None of it was recorded
 at the time, which is why it is called out here rather than left in the phase
 descriptions where it would read as done.
 
-### 1. Timeline decorations were never rebuilt (from Phase 2)
+### 1. Timeline decorations — **done**
 
 Phase 2's exit criteria included "a 1-hour audio file's waveform appears in
-under a second and is accurate at every zoom level", and the design called for
-a mip pyramid computed in a worker and cached to OPFS, plus filmstrip
-thumbnails via Mediabunny's `CanvasSink`.
+under a second and is accurate at every zoom level", and the design called for a
+mip pyramid computed in a worker and cached to OPFS, plus filmstrip thumbnails
+via Mediabunny's `CanvasSink`. Only the job queue had been built; both generators
+it called were pre-rewrite originals — a fixed 200 peaks per file, and a
+`<video>` element per media file.
 
-What was actually built was the _job queue_ — `lib/media-previews.ts`, which
-moved decoration requests out of the JSX render body into a
-concurrency-limited queue. That part is real and good. The two generators it
-calls are untouched originals:
+Both are rewritten, and the shape is in
+[`architecture.md`](architecture.md#timeline-decorations):
 
-- **`lib/waveform.ts`** still produces a fixed 200 peaks per file, however long
-  it is. On a one-hour recording each bar is 18 seconds — the exact defect
-  Phase 2 set out to remove. It also calls `decodeAudioData` on the whole file,
-  which loads an hour of PCM into memory to draw a 200-pixel strip. The cache
-  is an in-memory `Map`, so it is recomputed on every reload.
-- **`lib/clip-thumbnails.ts`** still creates a `<video>` element per media
-  file. Phase 3 deleted `frame-source.ts` specifically to stop doing that —
-  `<video>` elements leak toward Chrome's decoder cap and cannot seek
-  accurately — and this path survived the cull because nothing pointed at it.
-  It produces one 80×45 data URL, not a filmstrip.
+- `lib/waveform.ts` is now pure pyramid arithmetic — min/max byte pairs over
+  128-sample buckets, halved repeatedly, queried at the level matching the pixel
+  column so drawing costs O(columns) rather than O(file).
+- `media/waveform-analysis.ts` streams through `AudioSampleSink` instead of
+  handing the whole file to `decodeAudioData`, and runs in
+  `media/waveform-worker.ts`.
+- `lib/clip-thumbnails.ts` produces a single-row sprite sheet through
+  `CanvasSink`, plus the `posterFrame` call that let the media pool's `<video>`
+  thumbnail — the same pre-rewrite path, one file further out than the review
+  spotted — be deleted too.
+- Both cache to OPFS through `platform.cache`, so a second launch decodes
+  nothing. `media-previews.ts`'s docblock now describes what it does.
 
-`media-previews.ts`'s own docblock says "filmstrip thumbnails", which is
-aspirational rather than true. Worth fixing along with the code.
+Trade-offs taken are in [`findings.md`](findings.md) under Phase 8a: bucket size
+and the memory it implies, the one-pixel generosity of a zoomed-out envelope, and
+the 120-tile cap on a filmstrip.
 
-**Do:** rewrite both generators on the media engine, add the mip pyramid, cache
-to OPFS through `platform.cache` (which already exists and is used by
-autosave), and correct the docblock.
+### 2. The worker question — **decided**
 
-### 2. No worker anywhere (from Phases 2 and 5)
+Waveform analysis runs in a worker. The media engine does not, and that is now a
+recorded decision rather than a slip: `VideoDecoder` already does its work in the
+browser's media process, so moving the engine would marshal `VideoFrame`s across
+a boundary on the preview's hot path to relocate the thin JS around it. The
+facade's async shape stays as insurance against that judgement changing.
 
-There is no `Worker` in the codebase. Phase 2 wanted waveform analysis in one;
-Phase 5 wanted the media engine in one, and the engine facade was made async
-from day one specifically so that could be a transport swap rather than a
-rewrite. That option is still open and still unexercised.
+The measurement the plan asked for is which part is actually JS. Peak analysis is
+hundreds of millions of samples of arithmetic; video decode is a handful of calls
+into the platform.
 
-This is a responsiveness item, not a correctness one — which is why it keeps
-slipping, and why it should be scheduled explicitly or dropped explicitly.
+### 3. Preview quality ladder — **done**
 
-**Do:** take the waveform analysis first, since the rewrite in item 1 has to
-touch it anyway and analysing an hour of audio is the longest single block of
-main-thread work in the app. Judge the media engine separately afterwards, on
-a measurement rather than on principle: if decode is not stalling frames, the
-async facade is insurance and should be recorded as such rather than cashed in
-for a transport that has to marshal `VideoFrame`s across a boundary.
+`playback/preview-quality.ts` is a pure function of measured cost; the scheduler
+applies it and owns every `resizeCompositor` call, while the panel owns the base
+size and the canvas. Three rungs of the base — 1/1, 1/2, 1/4 — with hysteresis
+both ways and full quality restored whenever the playhead settles.
 
-### 3. No preview quality ladder (from Phase 4)
+Two departures from the specification, both in `findings.md`: the rungs are
+fractions of the preview's base rather than of the sequence, because the preview
+fix had already made the base half the sequence and a 1/1-of-sequence top rung
+would have reintroduced the 4K allocation that fix removed; and the ladder
+watches the interval between rendered frames as well as the time inside
+`renderFrame`, because scaling render targets buys GPU fill rate and GPU time is
+invisible to `performance.now()`.
 
-Phase 4 specified a quality ladder driven by measured frame time (1/1, 1/2,
-1/4). `ResizeObserver` and DPR handling landed; the ladder did not. Preview
-renders at full sequence resolution regardless of how long a frame takes, so a
-4K project previews at 4K.
+### 4. The verification tiers
 
-**Do:** measure frame time in the scheduler, which already owns the loop, and
-scale the compositor's render targets — not the canvas — by 1/1, 1/2 or 1/4,
-presenting upscaled. Two details decide whether it feels right rather than
-merely faster: hysteresis, so a frame near the threshold does not oscillate
-between rungs and shimmer; and dropping back to full resolution whenever the
-playhead settles, because a paused frame has all the time it needs and is the
-one people actually look at. The `settleFrame` path added with the preview fix
-is the natural place for that.
+- **Golden-frame diffing stays unbuilt, deliberately, and its dependencies are
+  gone.** `pixelmatch`, `pngjs` and `@types/pngjs` are removed. Reference images
+  would have to be regenerated on every GPU and driver the suite runs on, whereas
+  a probe saying "the pixel above the plate is lit after the blur" survives that
+  and reads as an assertion about the feature. Written up in
+  [`architecture.md`](architecture.md), along with the other half of the
+  convention: where a probe will not do, the material carries the assertion — the
+  fixtures burn in a frame counter, so "the filmstrip shows successive frames" is
+  a strictly increasing sequence of decoded numbers.
 
-### 4. The verification tiers drifted
+- **The join tests exist.** `test/browser/preview.test.tsx` mounts the real panel
+  and scrubs the way the timeline does; `test/browser/timeline-decorations.test.tsx`
+  puts a clip on a real lane and waits for a decoration to appear. Neither primes
+  anything. The second one caught its own version of the bug it exists to prevent
+  — see `findings.md`.
 
-- **Golden-frame diffing was not built as designed.** `pixelmatch` and `pngjs`
-  are declared dependencies and imported nowhere. What the browser tests
-  actually do is probe specific pixels and assert relationships — "the pixel
-  above the plate is transparent before the blur and lit after it". That is
-  arguably the better trade (no reference images to regenerate, and each
-  assertion says what it is checking), but the plan should say so and the three
-  unused dependencies should go.
+- **The Playwright E2E tier does not exist**, and still should not. Playwright is
+  present only as the driver for Vitest browser mode. The five E2E flows the plan
+  listed are largely covered by browser-mode tests that mount real components and
+  dispatch real pointer events — but "import a file through the OS picker" is not,
+  and cannot be.
 
-  **Do:** delete `pixelmatch`, `pngjs` and `@types/pngjs`. The convention
-  itself is already written up in
-  [`architecture.md`](architecture.md); what remains is removing the three
-  dependencies that imply the other approach. Reference images would have to be
-  regenerated on every GPU and driver the suite runs on, whereas a probe saying
-  "the pixel above the plate is lit after the blur" survives that and reads as
-  an assertion about the feature.
+- **CI has perf budgets now.** Scene build under 2 ms at 1000 clips, in its own
+  Node project (`pnpm test:perf`); a whole preview frame under a display frame at
+  half resolution, in the browser suite where there is real GL. Both print their
+  numbers on every run and both scale by `VITE_PERF_ALLOWANCE`, which CI sets
+  because its runners have no GPU.
 
-- **The Playwright E2E tier does not exist.** There is no
-  `playwright.config.ts`; Playwright is present only as the driver for
-  Vitest browser mode. The five E2E flows the plan listed are largely covered
-  by browser-mode tests that mount real components and dispatch real pointer
-  events — but "import a file through the OS picker" is not, and cannot be.
-- **CI has no perf budgets.** Phase 8 item, not started.
-
-- **Nothing tested that the application asks the renderer for anything.** The
-  renderer suites all warm the decoder cache themselves before rendering, which
-  is exactly the step the app was missing — so the preview could be black on
-  every launch with every test green. Found by the preview work, recorded in
-  [`findings.md`](findings.md), and the reason the two smoke flows below are
-  worth more than their size suggests.
-
-  **Do:** add browser tests that mount a panel, put a clip on the timeline, and
-  assert the picture appears _without_ the test priming anything — one for the
-  preview, one for a scrub, one for playback. Anywhere a test's setup performs
-  a step the application must also perform, the test is proving the wrong
-  thing.
+  Writing them turned up the reason a budget in the browser suite would not have
+  meant anything: `pnpm test:browser` had been exiting 1 on every run since it
+  was written, while reporting every test as passed. See `findings.md`.
 
 ---
 
 ## Sequencing
 
-**Do the carried-forward decoration work before Phase 7**, not after. The
-recommendation is not about tidiness:
+The decoration work was done before Phase 7, as recommended. The reasons are kept
+here because they are the argument for the ordering, not just a note about it:
 
 - A waveform at 18 seconds per bar makes audio editing guesswork, and it is
   visible within the first minute of a real edit. Everything shipped through
   Phase 6 assumes you can see where the sound is.
-- Both generators are the last code in the app still using the pre-rewrite
-  media path. Leaving them means the `<video>`-element decode path that Phase 3
-  deleted everywhere else has to be carried into the desktop build and made to
-  work there too.
-- Phase 7 is the first phase the existing suites cannot verify. Starting it
-  with known-broken subsystems underneath makes any failure ambiguous between
-  the new shell and the old code.
+- Both generators were the last code in the app still using the pre-rewrite media
+  path. Leaving them would have meant carrying the `<video>`-element decode path
+  that Phase 3 deleted everywhere else into the desktop build and making it work
+  there too.
+- Phase 7 is the first phase the existing suites cannot verify. Starting it with
+  known-broken subsystems underneath makes any failure ambiguous between the new
+  shell and the old code.
 
 Phase 8's remaining items — perf budgets, the debug HUD, accessibility — can
 stay after Phase 7. They do not block a real edit.
@@ -195,37 +194,75 @@ it. Budget for that.
 
 ---
 
-## Phase 8 — Hardening
+## Phase 8 — Hardening — **done**
 
-Now also the home for the carried-forward items above, which is most of its
-weight.
+Was the home for the carried-forward items above; that weight landed ahead of
+Phase 7, for the reasons under Sequencing, and the rest of the phase has now
+landed with it. Phase 7, the desktop shell, is what is left.
 
-- Rewrite the waveform and thumbnail generators (carried forward, item 1).
-- Decide the worker question explicitly (item 2): either move the media engine
-  and waveform analysis into workers, or record that the facade's async shape
-  is insurance rather than a plan.
-- Preview quality ladder (item 3).
-- Drop `pixelmatch`/`pngjs`/`@types/pngjs`, which imply a golden-image tier
+Done:
+
+- ✓ Rewrite the waveform and thumbnail generators (item 1).
+- ✓ Decide the worker question explicitly (item 2): waveform analysis moved into
+  one, the media engine deliberately not, recorded either way.
+- ✓ Preview quality ladder (item 3).
+- ✓ Drop `pixelmatch`/`pngjs`/`@types/pngjs`, which implied a golden-image tier
   that was deliberately not built (item 4).
-- Add the join tests: mount a panel, put a clip on the timeline, assert a
+- ✓ Add the join tests: mount a panel, put a clip on the timeline, assert a
   picture appears without the test priming the cache (item 4).
-- CI-enforced perf budgets: scene build under 2 ms at 1000 clips, preview frame
-  under 16 ms at half resolution.
-- Debug HUD: decoder count, cache bytes, frame-leak counter, dropped frames.
-  The counters already exist; nothing surfaces them.
-- Accessibility pass on the panel system — it is a custom docking layout in
-  shadow DOM with no keyboard navigation at all.
-- Onboarding, a keyboard map, and the rest of `docs/`.
+
+- ✓ CI-enforced perf budgets, and the discovery that the browser job they would
+  have run in had been exiting 1 on every run since it was written.
+- ✓ Debug HUD: decoder count, cache bytes and hit rate, the frame-leak counter,
+  dropped frames, and the preview's quality rung and render size. `Shift+D`.
+- ✓ Cap the preview's base size by the displayed canvas — a discrete ladder with
+  a dead band, so a splitter drag crosses a step at most once.
+- ✓ Accessibility pass on the panel system: tablists with a roving tabindex and
+  arrow-key navigation, splitters as focusable separators that resize with the
+  arrow keys, a focus ring inside the shadow root, and dialogs that are dialogs.
+- ✓ Onboarding and a keyboard map. The shortcut sheet is generated from the
+  command registry, so a new command documents itself; the hand-written one it
+  replaced had drifted far enough to be misleading.
+
+Remaining:
+
+- Nothing in this phase. The CI perf allowances are still guesses until a real
+  run reports its numbers, which is logged in [`findings.md`](findings.md)
+  rather than tracked here.
+
+---
+
+## Phase 8c — the open items — **done**
+
+Not a planned phase. It is what clearing the list of open and deferred items
+turned into, and it is written up in [`findings.md`](findings.md) because one of
+them was not the small thing it had been recorded as.
+
+- ✓ **The import path opens the file in the media engine.** Nothing but relinking
+  ever did, so no imported clip could decode a frame — the preview was black for
+  every file the application itself brought in. The probe is now the single
+  source of truth for duration, dimensions and audio, and `getVideoMetadata` and
+  `getAudioDuration` are gone. `test/browser/media-import.test.ts` goes in
+  through `importFileHandle` and primes nothing.
+- ✓ **`hasAudio` is read from the demuxer.** The `<video>` sniffer answered "no"
+  for every file, because `webkitAudioDecodedByteCount` is 0 until playback.
+- ✓ **The menu bar's hover-then-click bug.** A hover-switch and the click that
+  ends it are one gesture.
+- ✓ **`F6` / `⇧+F6` cycle panel regions**, as commands rather than layout keys.
+- ✓ **Export, relink and recovery are real dialogs.** They were never converted
+  to `Overlay` and had no role, no Escape and no focus trap. `@kobalte/core`,
+  `class-variance-authority` and `lucide-solid` are removed — nothing imported
+  any of them.
 
 ---
 
 ## Open items
 
-Tracked in [`findings.md`](findings.md) rather than duplicated here. In short:
-retime does not preserve pitch and deliberately does not pretend to; the
-subtitle parser has never met a real-world file; `getVideoMetadata` is a second
-source of truth about media alongside the engine's probe; and a menu bar
-hover-then-click bug.
+Tracked in [`findings.md`](findings.md) rather than duplicated here. What is
+left: retime does not preserve pitch and deliberately does not pretend to, and
+the subtitle parser has never met a real-world file. Both need work that is
+larger than the item — a time-stretcher sharing the offline render's code path,
+and a corpus of files this project does not have.
 
 ---
 

@@ -40,15 +40,21 @@ Being clear about scope is how a small project ships something good rather than
 half of something enormous. Explicitly **out of scope** for the foreseeable
 future:
 
-| Not in scope                     | Why                                                                    |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| Colour scopes and grading wheels | A grading suite is its own product. VideOS gives you an effects chain. |
-| Masks and motion tracking        | Compositing depth belongs in a compositor.                             |
-| Nested sequences, multicam       | Enormous surface area, narrow audience, deep model consequences.       |
-| EDL / OTIO interchange           | Worth doing eventually; not what stops anyone editing today.           |
+| Not in scope               | Why                                                              |
+| -------------------------- | ---------------------------------------------------------------- |
+| Masks and motion tracking  | Compositing depth belongs in a compositor.                       |
+| Nested sequences, multicam | Enormous surface area, narrow audience, deep model consequences. |
+| EDL / OTIO interchange     | Worth doing eventually; not what stops anyone editing today.     |
 
 These are refusals, not omissions. If one of them matters to you, the
 [Roadmap](roadmap.md) explains how to make the case for changing it.
+
+**Colour correction used to be on that list and no longer is.** Primary
+correction — wheels, temperature and tint, curves — and scopes to measure them
+against are now accepted into scope, though nothing is built and nothing is
+scheduled; see the [Roadmap](roadmap.md#colour-grading). A full grading suite,
+with secondaries and tracked windows, is still a different product, because it
+requires the masking and tracking above.
 
 ---
 
@@ -123,10 +129,10 @@ all. VideOS holds a hard line here:
 
 ### 5. Written down, including the parts that went wrong
 
-[`docs/findings.md`](../docs/findings.md) is a running engineering log of every
-defect found and every trade-off taken, including the ones that leave something
-worse than ideal in the tree, and including plans that were _refused_ after
-turning out to be wrong. A phase is not complete until its gaps are recorded.
+The repository keeps a running engineering log of every defect found and every
+trade-off taken, including the ones that leave something worse than ideal in the
+tree, and including plans that were _refused_ after turning out to be wrong. A
+phase is not complete until its gaps are recorded.
 
 This matters to users too: it is how you can tell the difference between a
 feature that is deferred and one that was quietly skipped.

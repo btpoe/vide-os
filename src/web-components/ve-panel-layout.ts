@@ -1,3 +1,13 @@
+/**
+ * The docking layout.
+ *
+ * Keyboard support is not decoration here: this is a custom control in a shadow
+ * root, so nothing about it is navigable unless it says so. Tab bars are real
+ * tablists with a roving tabindex, and splitters are real separators that
+ * resize with the arrow keys — which is also why sizing is applied to the cells
+ * in place rather than by re-rendering the tree. Re-rendering moved focus off
+ * the divider being dragged, so the second arrow press went nowhere.
+ */
 export interface LayoutNode {
   type: "row" | "col" | "tabs" | "panel";
   id: string;
@@ -9,6 +19,9 @@ export interface LayoutNode {
 
 const DIVIDER_SIZE = 4;
 const MIN_PANEL_SIZE = 5; // percent
+/** Percent a divider moves per arrow key, and per arrow key with Shift. */
+const KEY_RESIZE_STEP = 2;
+const KEY_RESIZE_STEP_LARGE = 10;
 
 const layoutStyles = `
   :host {
@@ -53,6 +66,25 @@ const layoutStyles = `
   .layout-divider:hover,
   .layout-divider.active {
     background: var(--color-divider-active, #6366f1);
+  }
+
+  /*
+    A focus ring that reads on a 4px bar: the outline is drawn outside it, over
+    the panels either side, because the bar itself is too thin to show one.
+  */
+  .layout-divider:focus-visible,
+  .layout-tab:focus-visible,
+  .layout-tab-close:focus-visible,
+  .panel-slot:focus-visible {
+    outline: 2px solid var(--color-primary, #6366f1);
+    outline-offset: -1px;
+    background: var(--color-divider-active, #6366f1);
+  }
+
+  .layout-tab:focus-visible,
+  .layout-tab-close:focus-visible,
+  .panel-slot:focus-visible {
+    background: none;
   }
 
   .layout-divider-h {
@@ -192,6 +224,8 @@ export class VePanelLayout extends HTMLElement {
   private _layout: LayoutNode | null = null;
   private _panelFactory: Map<string, () => HTMLElement> = new Map();
   private _panelCache: Map<string, HTMLElement> = new Map();
+  /** Split node id -> the element its cell sizes are written to. */
+  private _splitContainers: Map<string, HTMLElement> = new Map();
   private _resizing = false;
   private _resizeData: {
     nodeId: string;
@@ -312,7 +346,46 @@ export class VePanelLayout extends HTMLElement {
     return this._layout;
   }
 
+  /**
+   * Moves focus to the next panel region, wrapping at the ends.
+   *
+   * The tab bars and panel bodies are all reachable with Tab, which is a real
+   * path through a twelve-panel workspace but a long one — the Effects panel is
+   * a great many stops from the Timeline. This is the F6 convention: one key per
+   * region rather than one per control.
+   *
+   * Only the active tab of a tab group has its body in the DOM, so the cycle is
+   * over what is actually on screen without having to filter for it.
+   */
+  focusAdjacentPanel(delta: 1 | -1): boolean {
+    const slots = [...this._shadow.querySelectorAll<HTMLElement>(".panel-slot")];
+    if (slots.length === 0) return false;
+
+    // `document.activeElement` stops at the host of a shadow tree, so the real
+    // focus has to be followed down. Panel content is in `<ve-panel>`'s light
+    // DOM, which `closest` walks through — only its own shadow root would stop.
+    let active: Element | null = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    const current = active?.closest?.(".panel-slot") as HTMLElement | null;
+
+    const index = current ? slots.indexOf(current) : -1;
+    // From outside the layout entirely — the menu bar, say — F6 should enter it
+    // rather than do nothing.
+    const next =
+      index === -1
+        ? delta === 1
+          ? 0
+          : slots.length - 1
+        : (index + delta + slots.length) % slots.length;
+
+    slots[next].focus();
+    return true;
+  }
+
   private _render() {
+    // The elements a split's sizes are written to are about to be replaced.
+    this._splitContainers.clear();
+
     // Remove all children except <style> elements (layout styles + mirrored document styles)
     const styles = new Set(this._shadow.querySelectorAll("style"));
     const children = Array.from(this._shadow.childNodes);
@@ -347,6 +420,7 @@ export class VePanelLayout extends HTMLElement {
   private _buildSplit(node: LayoutNode): HTMLElement {
     const container = document.createElement("div");
     container.className = node.type === "row" ? "layout-row" : "layout-col";
+    this._splitContainers.set(node.id, container);
 
     const children = node.children || [];
     const sizes = node.sizes || children.map(() => 100 / children.length);
@@ -372,10 +446,32 @@ export class VePanelLayout extends HTMLElement {
         divider.className = `layout-divider ${
           node.type === "row" ? "layout-divider-h" : "layout-divider-v"
         }`;
+
+        // A separator, and a real one: focusable, announced with the sizes it
+        // controls, and movable from the keyboard. A splitter that can only be
+        // dragged makes the panel sizes a mouse-only feature.
+        divider.setAttribute("role", "separator");
+        divider.setAttribute("tabindex", "0");
+        // A row lays panels out left to right, so the bar between them is
+        // vertical — the orientation of the separator, not of the container.
+        divider.setAttribute(
+          "aria-orientation",
+          node.type === "row" ? "vertical" : "horizontal",
+        );
+        divider.setAttribute(
+          "aria-label",
+          `Resize ${this._nodeLabel(children[i])} and ${this._nodeLabel(children[i + 1])}`,
+        );
+        divider.setAttribute("aria-valuemin", String(MIN_PANEL_SIZE));
+        divider.setAttribute("aria-valuemax", String(100 - MIN_PANEL_SIZE));
+        divider.setAttribute("aria-valuenow", String(Math.round(sizes[i])));
+
         divider.addEventListener("mousedown", (e) => {
           e.preventDefault();
           this._startResize(node, i, container, e);
         });
+        divider.addEventListener("keydown", (e) => this._onDividerKey(e, node, i));
+
         container.appendChild(divider);
       }
     });
@@ -383,72 +479,248 @@ export class VePanelLayout extends HTMLElement {
     return container;
   }
 
+  /** What a divider says it is between: a panel's name, or what is in it. */
+  private _nodeLabel(node: LayoutNode): string {
+    if (node.panelId) return this._getPanelName(node.panelId);
+    const first = node.children?.[0];
+    return first ? this._nodeLabel(first) : "panel";
+  }
+
+  /**
+   * Arrow keys on a divider.
+   *
+   * Shift moves it in larger steps, the way a nudge and a coarse nudge work
+   * everywhere else in the app.
+   */
+  private _onDividerKey(event: KeyboardEvent, node: LayoutNode, index: number): void {
+    const row = node.type === "row";
+    const step = event.shiftKey ? KEY_RESIZE_STEP_LARGE : KEY_RESIZE_STEP;
+
+    let delta: number;
+    if (event.key === (row ? "ArrowLeft" : "ArrowUp")) delta = -step;
+    else if (event.key === (row ? "ArrowRight" : "ArrowDown")) delta = step;
+    else return;
+
+    event.preventDefault();
+    this._resizeBy(node, index, delta);
+  }
+
+  /**
+   * Moves one divider, clamped, and writes the result straight to the cells.
+   *
+   * In place rather than through `_render`, which is what lets the divider keep
+   * focus between key presses — and stops a mouse drag rebuilding the entire
+   * panel tree on every mousemove.
+   */
+  private _resizeBy(node: LayoutNode, index: number, deltaPercent: number): void {
+    if (!this._layout) return;
+    const sizes = [...(node.sizes || [])];
+    if (sizes.length < index + 2) return;
+
+    const a = sizes[index] + deltaPercent;
+    const b = sizes[index + 1] - deltaPercent;
+    if (a < MIN_PANEL_SIZE || b < MIN_PANEL_SIZE) return;
+
+    sizes[index] = a;
+    sizes[index + 1] = b;
+    this._updateNodeSizes(this._layout, node.id, sizes);
+    this._applySizes(node.id, sizes);
+    this._emitLayoutChange();
+  }
+
+  /** Pushes sizes onto the cells and the dividers of one split, in place. */
+  private _applySizes(nodeId: string, sizes: number[]): void {
+    const container = this._splitContainers.get(nodeId);
+    if (!container) return;
+
+    const row = container.classList.contains("layout-row");
+    const cells = container.querySelectorAll<HTMLElement>(":scope > .layout-cell");
+    cells.forEach((cell, i) => {
+      if (sizes[i] === undefined) return;
+      if (row) cell.style.width = `${sizes[i]}%`;
+      else cell.style.height = `${sizes[i]}%`;
+    });
+
+    const dividers = container.querySelectorAll<HTMLElement>(
+      ":scope > .layout-divider",
+    );
+    dividers.forEach((divider, i) => {
+      if (sizes[i] === undefined) return;
+      divider.setAttribute("aria-valuenow", String(Math.round(sizes[i])));
+    });
+  }
+
+  private _emitLayoutChange(): void {
+    this.dispatchEvent(
+      new CustomEvent("layout-change", {
+        bubbles: true,
+        composed: true,
+        detail: { layout: JSON.parse(JSON.stringify(this._layout)) },
+      }),
+    );
+  }
+
+  private _tabId(nodeId: string, index: number): string {
+    return `ve-tab-${nodeId}-${index}`;
+  }
+
+  private _tabPanelId(nodeId: string, index: number): string {
+    return `ve-tabpanel-${nodeId}-${index}`;
+  }
+
+  /** The header bar: a tablist, whatever it happens to be styled as. */
+  private _buildTabList(node: LayoutNode, count: number): HTMLElement {
+    const header = document.createElement("div");
+    header.className = "layout-tabs-header";
+    header.setAttribute("data-tabs-id", node.id);
+    header.setAttribute("role", "tablist");
+    header.setAttribute("aria-orientation", "horizontal");
+    header.addEventListener("keydown", (e) => this._onTabKey(e, node, count));
+    return header;
+  }
+
+  /**
+   * One tab.
+   *
+   * Shared by the tabbed and single-panel cases, which had two copies of this
+   * that had already drifted apart — the single-panel one never set a tab
+   * index. One copy is also what keeps the ARIA wiring in a single place.
+   */
+  private _buildTab(
+    node: LayoutNode,
+    child: LayoutNode,
+    index: number,
+    activeIndex: number,
+  ): HTMLElement {
+    const selected = index === activeIndex;
+    const tab = document.createElement("button");
+    tab.className = `layout-tab${selected ? " active" : ""}`;
+    tab.setAttribute("draggable", "true");
+    tab.setAttribute("data-panel-id", child.panelId || "");
+    tab.setAttribute("data-tab-index", String(index));
+    tab.setAttribute("data-tabs-node-id", node.id);
+
+    tab.id = this._tabId(node.id, index);
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(selected));
+    tab.setAttribute("aria-controls", this._tabPanelId(node.id, index));
+    // Roving tabindex: one stop for the whole bar, then arrow keys within it.
+    // Every tab being a tab stop turns moving past the layout into a dozen
+    // presses.
+    tab.setAttribute("tabindex", selected ? "0" : "-1");
+
+    tab.addEventListener("dragstart", (e) => {
+      if (!e.dataTransfer || !child.panelId) return;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("application/ve-panel-id", child.panelId);
+      e.dataTransfer.setData("application/ve-source-tabs-id", node.id);
+      tab.classList.add("dragging");
+      // Defer so the drag image captures the non-dimmed state
+      requestAnimationFrame(() => tab.classList.add("dragging"));
+    });
+
+    tab.addEventListener("dragend", () => {
+      tab.classList.remove("dragging");
+      this._clearAllDropIndicators();
+    });
+
+    const label = document.createElement("span");
+    label.textContent = child.panelId
+      ? this._getPanelName(child.panelId)
+      : `Tab ${index + 1}`;
+    tab.appendChild(label);
+
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "layout-tab-close";
+    closeBtn.textContent = "×";
+    closeBtn.title = "Close";
+    // Hidden from assistive technology rather than exposed: it sits inside the
+    // tab's own button, so announcing it would read as part of the panel's
+    // name. Delete on the focused tab is the keyboard path, and it is listed
+    // in the shortcut reference.
+    closeBtn.setAttribute("aria-hidden", "true");
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._closePanel(child.panelId);
+    });
+    tab.appendChild(closeBtn);
+
+    // Only where there is something to switch to. A lone panel's tab
+    // re-rendering the subtree and persisting a layout change on every click
+    // is work for no visible result.
+    if (node.type === "tabs") {
+      tab.addEventListener("click", () => this._setActiveTab(node.id, index));
+    }
+    return tab;
+  }
+
+  /**
+   * Arrow keys within a tab bar, and Delete to close.
+   *
+   * Activation follows focus, which is the right choice when switching tabs
+   * only changes which panel is shown and costs nothing.
+   */
+  private _onTabKey(event: KeyboardEvent, node: LayoutNode, count: number): void {
+    const current = Number(
+      (event.target as HTMLElement).getAttribute?.("data-tab-index") ?? -1,
+    );
+    if (!Number.isInteger(current) || current < 0) return;
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      const children = node.children ?? [node];
+      this._closePanel(children[current]?.panelId);
+      return;
+    }
+
+    let next: number;
+    if (event.key === "ArrowRight") next = (current + 1) % count;
+    else if (event.key === "ArrowLeft") next = (current - 1 + count) % count;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = count - 1;
+    else return;
+
+    event.preventDefault();
+    if (next === current) return;
+
+    this._setActiveTab(node.id, next);
+    // Focus has to be put back deliberately: activating a tab re-renders the
+    // subtree, so the element that had focus no longer exists.
+    this._focusTab(node.id, next);
+  }
+
+  private _focusTab(nodeId: string, index: number): void {
+    const tab = this._shadow.querySelector<HTMLElement>(
+      `.layout-tab[data-tabs-node-id="${CSS.escape(nodeId)}"][data-tab-index="${index}"]`,
+    );
+    tab?.focus();
+  }
+
+  private _closePanel(panelId: string | undefined): void {
+    if (!panelId) return;
+    this.dispatchEvent(
+      new CustomEvent("panel-close", {
+        bubbles: true,
+        composed: true,
+        detail: { panelId },
+      }),
+    );
+  }
+
   private _buildTabs(node: LayoutNode): HTMLElement {
     const container = document.createElement("div");
     container.className = "layout-tabs-container";
 
-    const header = document.createElement("div");
-    header.className = "layout-tabs-header";
-    header.setAttribute("data-tabs-id", node.id);
+    const children = node.children || [];
+    const activeTab = node.activeTab ?? 0;
+
+    const header = this._buildTabList(node, children.length);
 
     const content = document.createElement("div");
     content.className = "layout-tab-content";
 
-    const children = node.children || [];
-    const activeTab = node.activeTab ?? 0;
-
     children.forEach((child, i) => {
-      const tab = document.createElement("button");
-      tab.className = `layout-tab${i === activeTab ? " active" : ""}`;
-      tab.setAttribute("draggable", "true");
-      tab.setAttribute("data-panel-id", child.panelId || "");
-      tab.setAttribute("data-tab-index", String(i));
-      tab.setAttribute("data-tabs-node-id", node.id);
-
-      // Drag start
-      tab.addEventListener("dragstart", (e) => {
-        if (!e.dataTransfer || !child.panelId) return;
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("application/ve-panel-id", child.panelId);
-        e.dataTransfer.setData("application/ve-source-tabs-id", node.id);
-        tab.classList.add("dragging");
-        // Defer so the drag image captures the non-dimmed state
-        requestAnimationFrame(() => tab.classList.add("dragging"));
-      });
-
-      tab.addEventListener("dragend", () => {
-        tab.classList.remove("dragging");
-        this._clearAllDropIndicators();
-      });
-
-      const label = document.createElement("span");
-      label.textContent = child.panelId
-        ? this._getPanelName(child.panelId)
-        : `Tab ${i + 1}`;
-      tab.appendChild(label);
-
-      const closeBtn = document.createElement("span");
-      closeBtn.className = "layout-tab-close";
-      closeBtn.textContent = "×";
-      closeBtn.title = "Close";
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (child.panelId) {
-          this.dispatchEvent(
-            new CustomEvent("panel-close", {
-              bubbles: true,
-              composed: true,
-              detail: { panelId: child.panelId },
-            }),
-          );
-        }
-      });
-      tab.appendChild(closeBtn);
-
-      tab.addEventListener("click", () => {
-        this._setActiveTab(node.id, i);
-      });
-      header.appendChild(tab);
+      header.appendChild(this._buildTab(node, child, i, activeTab));
     });
 
     // Drop target: tab header bar
@@ -498,7 +770,7 @@ export class VePanelLayout extends HTMLElement {
       // Render panel content directly — the tabs header already provides the tab bar
       const childEl =
         child.type === "panel"
-          ? this._buildPanelContent(child)
+          ? this._buildPanelContent(child, node.id, activeTab)
           : this._buildNode(child);
       content.appendChild(childEl);
     }
@@ -508,11 +780,25 @@ export class VePanelLayout extends HTMLElement {
     return container;
   }
 
-  private _buildPanelContent(node: LayoutNode): HTMLElement {
+  /**
+   * The panel body, as the tabpanel its tab points at.
+   *
+   * Focusable, so a keyboard user can move from the tab bar into the panel
+   * itself rather than tabbing through every control ahead of it.
+   */
+  private _buildPanelContent(
+    node: LayoutNode,
+    tabsNodeId: string,
+    tabIndex: number,
+  ): HTMLElement {
     const slot = document.createElement("div");
     slot.className = "panel-slot";
     slot.setAttribute("data-panel-id", node.panelId || "");
     slot.setAttribute("data-node-id", node.id);
+    slot.id = this._tabPanelId(tabsNodeId, tabIndex);
+    slot.setAttribute("role", "tabpanel");
+    slot.setAttribute("aria-labelledby", this._tabId(tabsNodeId, tabIndex));
+    slot.setAttribute("tabindex", "0");
 
     if (node.panelId && this._panelFactory.has(node.panelId)) {
       let panel = this._panelCache.get(node.panelId);
@@ -534,58 +820,16 @@ export class VePanelLayout extends HTMLElement {
     const container = document.createElement("div");
     container.className = "layout-tabs-container";
 
-    const header = document.createElement("div");
-    header.className = "layout-tabs-header";
-    header.setAttribute("data-tabs-id", node.id);
+    // A tablist of one. Built by the same code as a real tab bar, so the two
+    // cannot drift apart again — the copy this replaced never set a tab index,
+    // which is why dragging a lone panel behaved differently from dragging a
+    // tabbed one.
+    const header = this._buildTabList(node, 1);
 
     const content = document.createElement("div");
     content.className = "layout-tab-content";
 
-    // Build the single tab button
-    const tab = document.createElement("button");
-    tab.className = "layout-tab active";
-    tab.setAttribute("draggable", "true");
-    tab.setAttribute("data-panel-id", node.panelId || "");
-    tab.setAttribute("data-tabs-node-id", node.id);
-
-    // Drag start
-    tab.addEventListener("dragstart", (e) => {
-      if (!e.dataTransfer || !node.panelId) return;
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("application/ve-panel-id", node.panelId);
-      e.dataTransfer.setData("application/ve-source-tabs-id", node.id);
-      tab.classList.add("dragging");
-      requestAnimationFrame(() => tab.classList.add("dragging"));
-    });
-
-    tab.addEventListener("dragend", () => {
-      tab.classList.remove("dragging");
-      this._clearAllDropIndicators();
-    });
-
-    const label = document.createElement("span");
-    label.textContent = node.panelId ? this._getPanelName(node.panelId) : "Panel";
-    tab.appendChild(label);
-
-    const closeBtn = document.createElement("span");
-    closeBtn.className = "layout-tab-close";
-    closeBtn.textContent = "×";
-    closeBtn.title = "Close";
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (node.panelId) {
-        this.dispatchEvent(
-          new CustomEvent("panel-close", {
-            bubbles: true,
-            composed: true,
-            detail: { panelId: node.panelId },
-          }),
-        );
-      }
-    });
-    tab.appendChild(closeBtn);
-
-    header.appendChild(tab);
+    header.appendChild(this._buildTab(node, node, 0, 0));
 
     // Drop target: header bar (merge into this panel as tabs)
     header.addEventListener("dragover", (e) => {
@@ -626,25 +870,7 @@ export class VePanelLayout extends HTMLElement {
       );
     });
 
-    // Build panel content
-    const slot = document.createElement("div");
-    slot.className = "panel-slot";
-    slot.setAttribute("data-panel-id", node.panelId || "");
-    slot.setAttribute("data-node-id", node.id);
-
-    if (node.panelId && this._panelFactory.has(node.panelId)) {
-      let panel = this._panelCache.get(node.panelId);
-      if (!panel) {
-        const factory = this._panelFactory.get(node.panelId)!;
-        panel = factory();
-        this._panelCache.set(node.panelId, panel);
-      }
-      slot.appendChild(panel);
-    } else {
-      slot.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--color-muted-foreground,#999);font-size:12px;">Panel: ${node.panelId || "empty"}</div>`;
-    }
-
-    content.appendChild(slot);
+    content.appendChild(this._buildPanelContent(node, node.id, 0));
     container.appendChild(header);
     container.appendChild(content);
     return container;
@@ -713,9 +939,10 @@ export class VePanelLayout extends HTMLElement {
       newSizes[index] = newA;
       newSizes[index + 1] = newB;
 
-      // Update layout in place and re-render
+      // Written straight onto the cells. Re-rendering here tore down and
+      // rebuilt every panel in the tree on every mousemove of a drag.
       this._updateNodeSizes(this._layout, this._resizeData.nodeId, newSizes);
-      this._render();
+      this._applySizes(this._resizeData.nodeId, newSizes);
     }
   };
 
@@ -727,13 +954,7 @@ export class VePanelLayout extends HTMLElement {
     document.body.style.userSelect = "";
 
     // Dispatch event so SolidJS store can persist
-    this.dispatchEvent(
-      new CustomEvent("layout-change", {
-        bubbles: true,
-        composed: true,
-        detail: { layout: JSON.parse(JSON.stringify(this._layout)) },
-      }),
-    );
+    this._emitLayoutChange();
   };
 
   private _updateNodeSizes(

@@ -15,6 +15,7 @@ import { mediaEngine } from "@/media/engine";
 import { forgetAllAssets } from "@/media/asset-registry";
 import { resetLeakCounters } from "@/media/frame-cache";
 import { createEmptyDoc } from "@/model/doc";
+import { setUIState } from "@/stores/ui-store";
 import * as edits from "@/model/edits";
 import { FPS_30 } from "@/lib/timecode";
 import { makeTestVideo, readFrameMarker } from "../fixtures/make-media";
@@ -228,6 +229,32 @@ describe("showing the timeline", () => {
     expect(isLit(await settle(comp)), "adding a clip should show it").toBe(true);
   });
 
+  it("never goes black while catching up with a jump backwards", async () => {
+    // The flicker. Jumping *forwards* is covered by the nearest-earlier
+    // fallback — frame 0 is still cached and stands in until 50 decodes — but
+    // jumping back past everything in the cache leaves `tryGet` with nothing at
+    // all to return. The render pass used to clear and present anyway, so every
+    // such pass was a black frame on screen, which during playback and scrubbing
+    // reads as the preview flickering.
+    await setUp();
+    const comp = startScheduler();
+
+    setPlayheadFrame(55);
+    expect(await settleOn(comp, 55)).toBe(55);
+
+    setPlayheadFrame(3);
+
+    // Watch every animation frame until it arrives, not just the end state.
+    let sawBlack = false;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      if (!isLit(readComposite(comp))) sawBlack = true;
+      if (isLit(readComposite(comp)) && markerOf(readComposite(comp)) === 3) break;
+    }
+
+    expect(sawBlack, "the preview should never present a black frame").toBe(false);
+  });
+
   it("keeps up with a scrub across several frames", async () => {
     // Dragging the playhead is a stream of positions, and a decode landing
     // late must not leave the preview parked on one of the ones it passed.
@@ -277,5 +304,60 @@ describe("the panel", () => {
     expect(host.textContent).not.toContain(`${SIZE} × ${SIZE}`);
 
     disposePanel();
+  });
+
+  it("renders no more pixels than the panel shows, and no fewer", async () => {
+    // A 4K project used to render 1920×1080 targets into whatever width the
+    // panel happened to be — 320 CSS pixels here. The quality ladder only
+    // reclaimed that under load, and a parked playhead is never under load.
+    const base = createEmptyDoc();
+    base.sequence.frameRate = FPS_30;
+    base.sequence.width = 3840;
+    base.sequence.height = 2160;
+    loadDocument(base);
+
+    host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:0;top:0;width:320px;height:240px";
+    document.body.append(host);
+    const disposePanel = render(() => <PreviewPanel />, host);
+
+    // The observer fires after layout, and the resize it triggers after that.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const canvas = host.querySelector("canvas")!;
+    const displayed = 320 * Math.min(window.devicePixelRatio || 1, 2);
+
+    expect(canvas.width).toBeLessThan(base.sequence.width / 2);
+    expect(canvas.width).toBeGreaterThanOrEqual(displayed);
+
+    disposePanel();
+  });
+
+  it("shows the counters when the debug HUD is on", async () => {
+    // Every number in the HUD was already being counted and none of it was
+    // reachable outside a test — including the frame-leak counter, which is
+    // the only evidence that the engine's `.close()` discipline is holding.
+    await setUp();
+    setUIState("showDebugHud", true);
+
+    host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:0;top:0;width:640px;height:480px";
+    document.body.append(host);
+    const disposePanel = render(() => <PreviewPanel />, host);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const text = host.textContent ?? "";
+
+      expect(text).toContain("decoders");
+      expect(text).toContain("dropped");
+      // The leak counter, reported as created-minus-closed.
+      expect(text).toContain("open");
+      // The rung, as the fraction of the base it renders at.
+      expect(text).toMatch(/\d+×\d+ · (full|1\/\d)/);
+    } finally {
+      setUIState("showDebugHud", false);
+      disposePanel();
+    }
   });
 });

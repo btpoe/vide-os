@@ -1,13 +1,16 @@
-import { Component, Show, createMemo } from "solid-js";
+import { Component, For, Show, createMemo } from "solid-js";
 import type { Clip, Track } from "@/model/doc";
 import { clipEndFrame } from "@/model/doc";
 import { framesToWidth, frameToContentX } from "@/lib/timeline-geometry";
+import { framesToSeconds } from "@/lib/timecode";
 import { timelineView } from "@/stores/timeline-view-store";
+import { sequenceFrameRate } from "@/stores/project-store";
 import { isClipSelected, selectClip } from "@/stores/timeline-store";
 import { uiState } from "@/stores/ui-store";
 import { previewVersion } from "@/lib/media-previews";
-import { getCachedWaveform, waveformToSvgPath } from "@/lib/waveform";
-import { getCachedThumbnail } from "@/lib/clip-thumbnails";
+import { peaksForRange, peaksToSvgPath } from "@/lib/waveform";
+import { getCachedWaveform } from "@/lib/waveform-cache";
+import { getCachedFilmstrip, tileIndexAt } from "@/lib/clip-thumbnails";
 import {
   beginClipDrag,
   beginTrim,
@@ -28,6 +31,18 @@ const TRIM_HANDLE_PX = 8;
  */
 const MIN_WIDTH_FOR_LABEL = 28;
 const MIN_WIDTH_FOR_DECORATION = 48;
+
+/** Height the waveform path is drawn against, stretched by the SVG viewBox. */
+const WAVEFORM_VIEW_HEIGHT = 40;
+
+/**
+ * Caps on decoration detail, so a clip zoomed to twenty thousand pixels wide
+ * does not cost twenty thousand peak columns or two hundred DOM nodes. Past
+ * these the columns and tiles stretch instead of multiplying — which is the
+ * right answer anyway, since at that zoom consecutive frames are near-identical.
+ */
+const MAX_WAVEFORM_COLUMNS = 2000;
+const MAX_FILMSTRIP_TILES = 60;
 
 const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
   const selected = () => isClipSelected(props.track.id, props.clip.id);
@@ -56,20 +71,76 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
   const mediaId = () =>
     props.clip.source.type === "asset" ? props.clip.source.assetId : null;
 
-  const waveformPath = createMemo(() => {
-    previewVersion(); // re-read the cache when a decoration lands
-    const id = mediaId();
-    if (!id || width() < MIN_WIDTH_FOR_DECORATION) return null;
-    const data = getCachedWaveform(id);
-    if (!data) return null;
-    return waveformToSvgPath(data, 1000, 40, 0, 1);
+  /**
+   * The span of the *source* this clip shows.
+   *
+   * Both decorations are indexed by source time rather than by position on the
+   * timeline, which is what makes them follow a trim, a slip and a speed change
+   * without anything being regenerated. The old waveform was stretched across
+   * whatever width the clip happened to have, so trimming a clip stretched its
+   * waveform instead of revealing a different part of it.
+   */
+  const sourceSpan = createMemo(() => {
+    const rate = sequenceFrameRate();
+    const start = framesToSeconds(props.clip.inPointFrames, rate);
+    return {
+      start,
+      end: start + framesToSeconds(props.clip.durationFrames * props.clip.speed, rate),
+    };
   });
 
-  const thumbnail = createMemo(() => {
+  /**
+   * Which decoration this clip gets, decided by the track and not by what
+   * happens to be cached.
+   *
+   * `TrackLane` requests peaks for audio tracks and a filmstrip for video ones,
+   * so reading whichever cache has something would make a video clip sprout a
+   * waveform if — and only if — a copy of the same asset were also sitting on an
+   * audio track. Predictable beats incidental.
+   */
+  const wantsWaveform = () => props.track.kind === "audio";
+
+  const waveform = createMemo(() => {
+    previewVersion(); // re-read the cache when a decoration lands
+    const id = mediaId();
+    const px = width();
+    if (!id || !wantsWaveform() || px < MIN_WIDTH_FOR_DECORATION) return null;
+    const pyramid = getCachedWaveform(id);
+    if (!pyramid) return null;
+
+    // One column per pixel: the pyramid makes that cost the same on an hour-long
+    // file as on a two-second one.
+    const columns = Math.max(2, Math.min(MAX_WAVEFORM_COLUMNS, Math.round(px)));
+    const { start, end } = sourceSpan();
+    const peaks = peaksForRange(pyramid, start, end, columns);
+    return {
+      columns,
+      path: peaksToSvgPath(peaks, columns, WAVEFORM_VIEW_HEIGHT),
+    };
+  });
+
+  const filmstrip = createMemo(() => {
     previewVersion();
     const id = mediaId();
-    if (!id || width() < MIN_WIDTH_FOR_DECORATION) return null;
-    return getCachedThumbnail(id);
+    const px = width();
+    if (!id || wantsWaveform() || px < MIN_WIDTH_FOR_DECORATION) return null;
+    const strip = getCachedFilmstrip(id);
+    if (!strip) return null;
+
+    const tileWidth = Math.max(strip.tileWidth, px / MAX_FILMSTRIP_TILES);
+    const count = Math.max(1, Math.min(MAX_FILMSTRIP_TILES, Math.ceil(px / tileWidth)));
+    const { start, end } = sourceSpan();
+
+    const tiles: { x: number; offset: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const sourceSec = start + ((i + 0.5) / count) * (end - start);
+      tiles.push({
+        x: i * tileWidth,
+        offset: tileIndexAt(strip, sourceSec) * tileWidth,
+      });
+    }
+
+    return { url: strip.url, tileWidth, sheetWidth: strip.tiles * tileWidth, tiles };
   });
 
   const edgeGrabbable = () =>
@@ -179,25 +250,39 @@ const ClipView: Component<{ track: Track; clip: Clip }> = (props) => {
       onPointerDown={handlePointerDown}
       title={label()}
     >
-      <Show when={thumbnail()}>
-        {(src) => (
-          <img
-            src={src()}
-            alt=""
-            draggable={false}
-            class="absolute inset-y-0 left-0 h-full w-auto opacity-40 pointer-events-none object-cover"
-          />
+      <Show when={filmstrip()}>
+        {(strip) => (
+          <div class="absolute inset-0 opacity-40 pointer-events-none" data-filmstrip>
+            <For each={strip().tiles}>
+              {(tile) => (
+                <div
+                  class="absolute inset-y-0 bg-no-repeat"
+                  style={{
+                    left: `${tile.x}px`,
+                    width: `${strip().tileWidth}px`,
+                    "background-image": `url(${strip().url})`,
+                    // The sheet is one row, so only the horizontal offset picks
+                    // the tile; the vertical scale fills the lane whatever
+                    // height it has been dragged to.
+                    "background-size": `${strip().sheetWidth}px 100%`,
+                    "background-position": `-${tile.offset}px 0`,
+                  }}
+                />
+              )}
+            </For>
+          </div>
         )}
       </Show>
 
-      <Show when={waveformPath()}>
-        {(path) => (
+      <Show when={waveform()}>
+        {(wave) => (
           <svg
             class="absolute inset-x-0 bottom-0 h-1/2 w-full pointer-events-none"
-            viewBox="0 0 1000 40"
+            viewBox={`0 0 ${wave().columns} ${WAVEFORM_VIEW_HEIGHT}`}
             preserveAspectRatio="none"
+            data-waveform
           >
-            <path d={path()} fill={`rgba(${palette()},0.75)`} />
+            <path d={wave().path} fill={`rgba(${palette()},0.75)`} />
           </svg>
         )}
       </Show>

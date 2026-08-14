@@ -1,6 +1,13 @@
 import { Component, onMount, onCleanup, createSignal, Show } from "solid-js";
 import { render } from "solid-js/web";
-import { VePanelLayout } from "./web-components/ve-panel-layout";
+// Side-effect imports: both modules define their custom element when they load,
+// and the type-only use below is elided, so without these `App` renders a
+// `<ve-panel-layout>` that has never been upgraded and has no methods. It
+// worked because `index.tsx` imports them first — which made mounting `App`
+// anywhere else, a test included, quietly different from running the app.
+import "./web-components/ve-panel";
+import "./web-components/ve-panel-layout";
+import type { VePanelLayout } from "./web-components/ve-panel-layout";
 import {
   uiState,
   updateLayout,
@@ -40,6 +47,7 @@ import { initTransport } from "./playback/transport";
 import { hasMediaProblems, mediaProblems } from "./stores/media-problems";
 import { restoreMedia } from "./stores/media-store";
 import { registerPanel, type PanelDefinition } from "./web-components/registry";
+import { isDebugHudShown } from "./commands/definitions";
 import {
   commands as builtInCommands,
   registerCommands,
@@ -74,6 +82,9 @@ import HistoryPanel from "./panels/HistoryPanel";
 import MixerPanel from "./panels/MixerPanel";
 import ExportDialog from "./panels/ExportDialog";
 import RelinkDialog from "./panels/RelinkDialog";
+import Overlay from "./panels/Overlay";
+import ShortcutSheet from "./panels/ShortcutSheet";
+import GettingStarted from "./panels/GettingStarted";
 
 // Helper: mount a SolidJS component into a <ve-panel> web component
 function createPanelElement(title: string, SolidComponent: Component): HTMLElement {
@@ -196,8 +207,24 @@ const builtInPanels: PanelDefinition[] = [
 const App: Component = () => {
   let layoutRef: HTMLElement | undefined;
   const [menuOpen, setMenuOpen] = createSignal<string | null>(null);
+  /**
+   * The menu the pointer opened by hovering across the bar.
+   *
+   * A menu bar has two ways to change menus: click one, or — once one is open —
+   * simply move across to another. The click that lands at the end of that
+   * second gesture used to hit the same toggle as the first, find the menu it
+   * was aiming at already open, and close it. Remembering that hover opened this
+   * one makes that click a no-op, while a genuine second click on a trigger
+   * still closes it.
+   */
+  let openedByHover: string | null = null;
+  const closeMenu = () => {
+    openedByHover = null;
+    setMenuOpen(null);
+  };
   const [exportOpen, setExportOpen] = createSignal(false);
   const [shortcutsOpen, setShortcutsOpen] = createSignal(false);
+  const [gettingStartedOpen, setGettingStartedOpen] = createSignal(false);
   const [aboutOpen, setAboutOpen] = createSignal(false);
   const [openWarnings, setOpenWarnings] = createSignal<string[]>([]);
   const [relinkOpen, setRelinkOpen] = createSignal(false);
@@ -285,6 +312,27 @@ const App: Component = () => {
         category: "View",
         run: handleResetLayout,
       },
+      {
+        // Written as `Shift+?` rather than `?`: the chord matcher compares
+        // modifiers as well as the key, and the event for "?" carries Shift.
+        id: "help.shortcuts",
+        label: "Keyboard Shortcuts",
+        shortcut: "Shift+?",
+        category: "Help",
+        run: () => setShortcutsOpen(true),
+      },
+      {
+        id: "help.gettingStarted",
+        label: "Getting Started",
+        category: "Help",
+        run: () => setGettingStartedOpen(true),
+      },
+      {
+        id: "help.about",
+        label: "About VideOS",
+        category: "Help",
+        run: () => setAboutOpen(true),
+      },
     ]);
     onCleanup(installShortcuts());
 
@@ -326,7 +374,7 @@ const App: Component = () => {
     // Close menus on outside click
     const closeMenus = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest(".menu-bar")) setMenuOpen(null);
+      if (!target.closest(".menu-bar")) closeMenu();
     };
     window.addEventListener("click", closeMenus);
     onCleanup(() => window.removeEventListener("click", closeMenus));
@@ -467,6 +515,30 @@ const App: Component = () => {
     action: () => runCommand(id),
   });
 
+  /**
+   * The same, for a command that shows a check mark.
+   *
+   * A separate helper rather than an option on `fromCommand`, because the menu
+   * renderer decides whether to draw the check column from whether the key is
+   * present at all — so items without one must not have it.
+   */
+  const fromToggleCommand = (id: string, checked: () => boolean) => ({
+    get label() {
+      return getCommand(id)?.label ?? id;
+    },
+    get shortcut() {
+      const shortcut = getCommand(id)?.shortcut;
+      return shortcut ? formatChord(shortcut) : "";
+    },
+    get disabled() {
+      return !isEnabled(id);
+    },
+    get checked() {
+      return checked();
+    },
+    action: () => runCommand(id),
+  });
+
   const menuItems: Record<
     string,
     {
@@ -514,6 +586,7 @@ const App: Component = () => {
     ],
     View: [
       fromCommand("view.resetLayout"),
+      fromToggleCommand("view.toggleDebugHud", isDebugHudShown),
       { label: "", separator: true },
       ...builtInPanels.map((p) => ({
         label: p.name,
@@ -536,12 +609,10 @@ const App: Component = () => {
       })),
     ],
     Help: [
-      {
-        label: "Keyboard Shortcuts",
-        shortcut: "?",
-        action: () => setShortcutsOpen(true),
-      },
-      { label: "About VideOS", action: () => setAboutOpen(true) },
+      fromCommand("help.gettingStarted"),
+      fromCommand("help.shortcuts"),
+      { label: "", separator: true },
+      fromCommand("help.about"),
     ],
   };
 
@@ -560,10 +631,15 @@ const App: Component = () => {
               }`}
               onClick={(e) => {
                 e.stopPropagation();
-                setMenuOpen(menuOpen() === menu ? null : menu);
+                const hoverOpened = openedByHover === menu;
+                openedByHover = null;
+                if (menuOpen() === menu && !hoverOpened) closeMenu();
+                else setMenuOpen(menu);
               }}
               onMouseEnter={() => {
-                if (menuOpen() !== null) setMenuOpen(menu);
+                if (menuOpen() === null || menuOpen() === menu) return;
+                openedByHover = menu;
+                setMenuOpen(menu);
               }}
             >
               {menu}
@@ -579,7 +655,7 @@ const App: Component = () => {
                       class="w-full flex items-center justify-between px-3 py-1.5 text-xs text-popover-foreground transition-colors enabled:hover:bg-accent disabled:opacity-40 disabled:cursor-default"
                       onClick={() => {
                         item.action?.();
-                        setMenuOpen(null);
+                        closeMenu();
                       }}
                     >
                       <span class="flex items-center gap-2">
@@ -663,148 +739,65 @@ const App: Component = () => {
         of them mean the user has something to fix.
       */}
       <Show when={openWarnings().length > 0}>
-        <div
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setOpenWarnings([])}
+        <Overlay
+          title="Project opened with changes"
+          onClose={() => setOpenWarnings([])}
         >
-          <div
-            class="bg-card border border-border rounded-lg shadow-2xl w-[480px] max-h-[70vh] overflow-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="flex items-center justify-between px-5 py-3 border-b border-border">
-              <h2 class="text-sm font-semibold">Project opened with changes</h2>
-              <button
-                class="text-muted-foreground hover:text-foreground"
-                onClick={() => setOpenWarnings([])}
-              >
-                ✕
-              </button>
-            </div>
-            <ul class="px-5 py-4 space-y-2 text-xs text-muted-foreground list-disc list-inside">
-              {openWarnings().map((warning) => (
-                <li>{warning}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
+          <ul class="px-5 py-4 space-y-2 text-xs text-muted-foreground list-disc list-inside">
+            {openWarnings().map((warning) => (
+              <li>{warning}</li>
+            ))}
+          </ul>
+        </Overlay>
       </Show>
 
-      {/* Keyboard Shortcuts Overlay */}
+      {/* Keyboard Shortcuts — generated from the command registry */}
       <Show when={shortcutsOpen()}>
-        <div
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setShortcutsOpen(false)}
+        <Overlay
+          title="Keyboard Shortcuts"
+          width="w-[560px]"
+          onClose={() => setShortcutsOpen(false)}
         >
-          <div
-            class="bg-card border border-border rounded-lg shadow-2xl w-[520px] max-h-[80vh] overflow-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="flex items-center justify-between px-5 py-3 border-b border-border">
-              <h2 class="text-sm font-semibold">Keyboard Shortcuts</h2>
-              <button
-                class="text-muted-foreground hover:text-foreground"
-                onClick={() => setShortcutsOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
-            <div class="px-5 py-4 space-y-3 text-xs">
-              {[
-                [
-                  "Transport",
-                  [
-                    ["Space", "Play / Pause"],
-                    ["J", "Rewind 5s"],
-                    ["K", "Play / Pause"],
-                    ["L", "Forward 5s"],
-                    ["Home", "Go to start"],
-                    ["End", "Go to end"],
-                  ],
-                ],
-                [
-                  "Playhead",
-                  [
-                    ["← →", "Step 1 frame"],
-                    ["Shift + ← →", "Nudge clips 1s"],
-                  ],
-                ],
-                [
-                  "Editing",
-                  [
-                    ["Delete / ⌫", "Delete selected"],
-                    ["⌘A", "Select all"],
-                    ["⌘Z", "Undo"],
-                    ["⇧⌘Z", "Redo"],
-                    ["S", "Toggle snap"],
-                  ],
-                ],
-                [
-                  "Tools",
-                  [
-                    ["V", "Select"],
-                    ["C", "Razor"],
-                    ["T", "Trim"],
-                    ["Y", "Slip"],
-                    ["U", "Slide"],
-                    ["H", "Hand"],
-                  ],
-                ],
-                [
-                  "Zoom",
-                  [
-                    ["⌘+", "Zoom in"],
-                    ["⌘−", "Zoom out"],
-                  ],
-                ],
-              ].map(([section, shortcuts]) => (
-                <div>
-                  <div class="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mb-1.5">
-                    {section as string}
-                  </div>
-                  <div class="grid grid-cols-2 gap-y-1">
-                    {(shortcuts as string[][]).map(([key, desc]) => (
-                      <>
-                        <span class="font-mono text-muted-foreground">{key}</span>
-                        <span class="text-foreground">{desc}</span>
-                      </>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+          <ShortcutSheet />
+        </Overlay>
+      </Show>
+
+      {/* Getting Started */}
+      <Show when={gettingStartedOpen()}>
+        <Overlay title="Getting Started" onClose={() => setGettingStartedOpen(false)}>
+          <GettingStarted
+            onShowShortcuts={() => {
+              setGettingStartedOpen(false);
+              setShortcutsOpen(true);
+            }}
+          />
+        </Overlay>
       </Show>
 
       {/* About Overlay */}
       <Show when={aboutOpen()}>
-        <div
-          class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setAboutOpen(false)}
+        <Overlay
+          title="About VideOS"
+          width="w-[360px]"
+          bare
+          onClose={() => setAboutOpen(false)}
         >
-          <div
-            class="bg-card border border-border rounded-lg shadow-2xl w-[360px] text-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="px-6 py-8 space-y-3">
-              <div class="text-2xl font-bold text-primary">VideOS</div>
-              <div class="text-xs text-muted-foreground">
-                Browser-Based Video Editor
-              </div>
-              <div class="text-[10px] text-muted-foreground/60 space-y-1">
-                <div>Built with SolidJS + WebGL2 + Web Components</div>
-                <div>File System Access API · MediaRecorder API</div>
-                <div>Chromium-based browsers only</div>
-              </div>
-              <button
-                class="mt-4 px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90"
-                onClick={() => setAboutOpen(false)}
-              >
-                Close
-              </button>
+          <div class="px-6 py-8 space-y-3 text-center">
+            <div class="text-2xl font-bold text-primary">VideOS</div>
+            <div class="text-xs text-muted-foreground">Browser-Based Video Editor</div>
+            <div class="text-[10px] text-muted-foreground/60 space-y-1">
+              <div>Built with SolidJS + WebGL2 + Web Components</div>
+              <div>File System Access API · WebCodecs</div>
+              <div>Chromium-based browsers only</div>
             </div>
+            <button
+              class="mt-4 px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => setAboutOpen(false)}
+            >
+              Close
+            </button>
           </div>
-        </div>
+        </Overlay>
       </Show>
     </div>
   );

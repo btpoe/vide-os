@@ -69,6 +69,7 @@ File System Access requires a **secure context**, so it must be `https://` or
 | `pnpm format:check` | Prettier, check only — what CI runs                |
 | `pnpm test`         | Unit and property tests, in Node                   |
 | `pnpm test:browser` | Tests needing real WebGL2 / WebCodecs, in Chromium |
+| `pnpm test:perf`    | Performance budgets                                |
 | `pnpm check`        | typecheck + lint + test + build — the full gate    |
 
 Browser tests need Chromium installed once:
@@ -119,9 +120,19 @@ The layout is stored in `localStorage` and restored on the next launch. It is
 per-browser, not part of the project file — the same project opens into whatever
 arrangement you last used.
 
-> **Accessibility note:** the docking system is a custom layout in shadow DOM
-> with **no keyboard navigation**. This is known and scheduled; see
-> [Roadmap](roadmap.md). Panel _contents_ are ordinary DOM and behave normally.
+### From the keyboard
+
+The docking layout is navigable without a pointer. Tab bars are `tablist`s with a
+roving tabindex, and splitters are real `separator`s that resize with the arrow
+keys.
+
+| Key            | Action                                 |
+| -------------- | -------------------------------------- |
+| `←` / `→`      | Move between panel tabs                |
+| `Home` / `End` | First / last tab                       |
+| `Delete`       | Close the focused panel                |
+| Arrow keys     | Resize a split, with a divider focused |
+| `⇧` + arrow    | Resize in larger steps                 |
 
 ### The panels
 

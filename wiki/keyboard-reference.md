@@ -4,6 +4,10 @@ Every registered shortcut, taken from the command registry in
 [`src/commands/definitions.ts`](../src/commands/definitions.ts) and
 [`src/App.tsx`](../src/App.tsx).
 
+The app has the same list built in: **Help ▸ Keyboard Shortcuts** (`⇧?`). It is
+_generated from the registry_, so a command cannot be added without documenting
+itself and the sheet cannot drift.
+
 `Mod` is **⌘ on macOS** and **Ctrl** everywhere else. Shortcuts never fire while
 you are typing in a text field.
 
@@ -102,9 +106,45 @@ Mouse: `Mod`-scroll or pinch to zoom (cursor-anchored), `Shift`-scroll to pan.
 
 ## View
 
-| Shortcut | Command   | Notes                                                                                                                                                                                   |
-| -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `⇧+D`    | Debug HUD | A plain letter on purpose: the modifier combinations a HUD toggle would want are taken by the browser or the window manager, and a shortcut the page cannot receive is worse than none. |
+| Shortcut | Command              | Notes                                                                                                                                                                                   |
+| -------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `⇧+D`    | Debug HUD            | A plain letter on purpose: the modifier combinations a HUD toggle would want are taken by the browser or the window manager, and a shortcut the page cannot receive is worse than none. |
+| `F6`     | Focus Next Panel     | Moves focus to the next panel region, wrapping at the end. From outside the layout it enters the first one.                                                                             |
+| `⇧+F6`   | Focus Previous Panel | The same, backwards.                                                                                                                                                                    |
+
+## Help
+
+| Shortcut | Command            | Notes                                                        |
+| -------- | ------------------ | ------------------------------------------------------------ |
+| `⇧?`     | Keyboard Shortcuts | Written as `Shift+?` because the event for `?` carries Shift |
+| —        | Getting Started    | Menu only                                                    |
+| —        | About VideOS       | Menu only                                                    |
+
+## The panel layout
+
+Handled by the docking layout itself rather than by the command registry, so
+they work wherever focus is inside it.
+
+| Shortcut       | Action                                 |
+| -------------- | -------------------------------------- |
+| `←` / `→`      | Move between panel tabs                |
+| `Home` / `End` | First / last tab                       |
+| `Delete`       | Close the focused panel                |
+| Arrow keys     | Resize a split, with a divider focused |
+| `⇧` + arrow    | Resize in larger steps                 |
+
+Tab bars are `tablist`s with a roving tabindex; splitters are real `separator`s
+carrying `aria-valuenow`.
+
+`F6` is the way _between_ regions, and unlike the keys above it is a command in
+the registry rather than a handler on the layout — it has to work from anywhere,
+including the menu bar. Tab still reaches every tab bar and panel body in turn;
+`F6` is the short path through a twelve-panel workspace.
+
+**On a Mac laptop `F6` may need `Fn`**, unless the function keys are set to
+behave as function keys in System Settings. That is the platform's decision, not
+the app's, and substituting a non-standard chord would cost every other platform
+the convention — `F6` is what a screen-reader user tries first.
 
 ---
 

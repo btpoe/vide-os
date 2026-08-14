@@ -1,5 +1,6 @@
 import { Component, For, Show, createSignal } from "solid-js";
 import { loadDocument } from "@/stores/project-store";
+import Overlay from "./Overlay";
 import {
   readRevision,
   clearRevisions,
@@ -63,19 +64,18 @@ const RecoveryDialog: Component<RecoveryDialogProps> = (props) => {
   };
 
   return (
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div class="bg-card border border-border rounded-lg shadow-2xl w-[460px] max-h-[80vh] flex flex-col">
-        <div class="px-5 py-3 border-b border-border">
-          <h2 class="text-sm font-semibold text-foreground">
-            The editor closed unexpectedly
-          </h2>
-          <p class="mt-1 text-[11px] text-muted-foreground">
-            Your work was saved as it went. The most recent version is already open —
-            pick an earlier one if that is not the one you want.
-          </p>
-        </div>
+    <Overlay
+      title="The editor closed unexpectedly"
+      onClose={props.onClose}
+      width="w-[460px]"
+    >
+      <div>
+        <p class="px-5 py-3 text-[11px] text-muted-foreground border-b border-border">
+          Your work was saved as it went. The most recent version is already open — pick
+          an earlier one if that is not the one you want.
+        </p>
 
-        <div class="flex-1 overflow-auto">
+        <div>
           <For each={props.offer.all}>
             {(revision, index) => (
               <button
@@ -125,7 +125,7 @@ const RecoveryDialog: Component<RecoveryDialogProps> = (props) => {
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 };
 

@@ -19,6 +19,7 @@ import {
   type FitMode,
   type ProjectDoc,
   type TextStyle,
+  type Track,
   type TransitionType,
   clipAt,
   clipEndFrame,
@@ -182,13 +183,11 @@ function buildLayer(clip: Clip, frame: number): Layer | null {
  * single-clip path applies.
  */
 function transitionAt(
-  doc: ProjectDoc,
-  trackId: string,
+  track: Track,
   frame: number,
 ): { type: TransitionType; progress: number; from: Clip; to: Clip } | null {
-  const track = doc.tracks.find((t) => t.id === trackId);
-  if (!track) return null;
-
+  // Takes the track rather than looking it up by id: the only caller is the
+  // per-frame loop in `buildScene`, which already has it in hand.
   for (const transition of track.transitions) {
     const from = track.clips.find((c) => c.id === transition.leftClipId);
     const to = track.clips.find((c) => c.id === transition.rightClipId);
@@ -233,7 +232,7 @@ export function buildScene(doc: ProjectDoc, frame: number): Scene {
 
   // Bottom to top.
   for (const track of [...videoTracks].reverse()) {
-    const transition = transitionAt(doc, track.id, frame);
+    const transition = transitionAt(track, frame);
 
     if (transition) {
       const from = buildLayer(transition.from, frame);

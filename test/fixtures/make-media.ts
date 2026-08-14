@@ -31,6 +31,12 @@ export interface FixtureOptions {
   withAudio?: boolean;
   /** Tone frequency in Hz, for locating a position in the audio. */
   toneHz?: number;
+  /**
+   * Amplitude at a time in seconds, so a fixture can carry a known envelope.
+   * Defaults to a constant 0.5 — which is a fine tone and a useless waveform,
+   * since every peak comes out the same.
+   */
+  toneGain?: (seconds: number) => number;
 }
 
 /**
@@ -166,8 +172,9 @@ export async function makeTestVideo(options: FixtureOptions = {}): Promise<Blob>
     const buffer = context.createBuffer(1, length, sampleRate);
     const channel = buffer.getChannelData(0);
     const hz = options.toneHz ?? 440;
+    const gain = options.toneGain ?? (() => 0.5);
     for (let i = 0; i < length; i++) {
-      channel[i] = Math.sin((2 * Math.PI * hz * i) / sampleRate) * 0.5;
+      channel[i] = Math.sin((2 * Math.PI * hz * i) / sampleRate) * gain(i / sampleRate);
     }
     await audioSource.add(buffer);
     audioSource.close();

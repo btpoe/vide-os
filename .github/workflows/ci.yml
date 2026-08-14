@@ -32,6 +32,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # Scene building is the one thing every rendered frame waits on, so it
+      # has a budget. The runner is slower than a developer's machine, hence
+      # the allowance — see test/perf/budgets.ts.
+      - name: Performance budgets
+        run: pnpm test:perf
+        env:
+          VITE_PERF_ALLOWANCE: "3"
+
       - name: Build
         run: pnpm build
 
@@ -52,6 +60,14 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
-      # Golden-frame and export-determinism suites need real WebGL2/WebCodecs.
+      # The render, determinism, and component suites need real WebGL2 and
+      # WebCodecs. The preview frame budget runs here too, on a runner with no
+      # GPU: Chromium falls back to software rasterization, which is several
+      # times slower for reasons that have nothing to do with this code, so the
+      # budget is relaxed rather than removed. It still catches the regression
+      # it exists for — a frame that has started costing an order of magnitude
+      # more than it did.
       - name: Browser tests
         run: pnpm test:browser
+        env:
+          VITE_PERF_ALLOWANCE: "5"

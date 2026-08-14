@@ -259,9 +259,20 @@ default layout.
 - **Panels live in shadow DOM.** If you dispatch synthetic events in a test,
   they need `composed: true` or they will never cross the boundary and your
   handler will silently not run.
-- **No keyboard navigation** in the docking layout. Panel contents are ordinary
-  DOM and behave normally; moving _between_ panels by keyboard does not work
-  yet.
+- **The docking layout is keyboard-navigable; your panel's contents are your
+  responsibility.** Tab bars are `tablist`s with a roving tabindex, splitters are
+  `separator`s, and `F6` cycles between panel regions — but nothing audits what
+  is inside them. Give controls accessible names and a sensible focus order.
+
+  `F6` finds the region a panel's contents are in by walking up from the focused
+  element, so it keeps working inside your panel without you doing anything. It
+  is the one layout key that is a command in the registry rather than a handler
+  on the element, because it has to work from outside the layout too; the entry
+  point is `focusAdjacentPanel` in
+  [`src/web-components/panel-focus.ts`](../../src/web-components/panel-focus.ts),
+  kept apart from the element module so the registry stays loadable without a
+  DOM.
+
 - **Panel state is not persisted** beyond its position in the layout. If your
   panel has preferences, persist them yourself with `@/lib/persist`.
 - **Removing a panel id that a saved layout references** leaves a dangling

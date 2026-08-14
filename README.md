@@ -13,26 +13,36 @@ Playback is frame-accurate and export matches the timeline exactly.
 
 Specifically, as of now:
 
-| Area                            | State                                                                                                                                                                                                                                                                                      |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Panel layout, docking, tab drag | Works                                                                                                                                                                                                                                                                                      |
-| Timeline editing                | Works. Drag, trim, razor, snapping, ripple/roll/slip/slide, multi-select drag across tracks, cut/copy/paste/duplicate. All undoable; Escape aborts a drag.                                                                                                                                 |
-| Timeline zoom & scroll          | Works. Cursor-anchored zoom from ~4 hours down to a single frame, horizontal scroll, fit-to-window, resizable track lanes.                                                                                                                                                                 |
-| Playback                        | Frame-accurate. One clock derived from AudioContext, WebCodecs decode per clip instance, synchronous rendering. J/K/L shuttle.                                                                                                                                                             |
-| Export                          | Works, and is deterministic. One frame written per timeline frame, timestamped from its frame index; audio mixed once up front. Codecs are negotiated with the real encoder and the file is named from what was actually written. Streams to disk for exports too large to hold in memory. |
-| Audio                           | Works. Per-clip volume, pan and fades; track mute/solo; a mixer with meters. Audio-only files play. The offline mix shares one code path with preview.                                                                                                                                     |
-| Effects + keyframes             | Work. Eight effects, reorderable, individually bypassable, every parameter keyframable. Blur is separable and resolution-independent.                                                                                                                                                      |
-| Undo / redo                     | Works. Document snapshots, so every edit undoes and redoes exactly.                                                                                                                                                                                                                        |
-| Save / open                     | Works. `.videos` bundles are portable and carry a media table; older `.videos.json` files migrate on open.                                                                                                                                                                                 |
-| Transitions                     | Work. Crossfade, dip-to-black and wipes, refused rather than faked when a clip has no handles to overlap into.                                                                                                                                                                             |
-| Titles / text clips             | Work. Rasterised at sequence resolution and composited as ordinary layers, so they inherit transform, opacity and effects.                                                                                                                                                                 |
-| Transform / opacity / crop      | Work, and keyframe. Position, scale, rotation, anchor, opacity, crop and blend mode, with bezier easing on any of them.                                                                                                                                                                    |
-| Media persistence               | Works. Handles survive a lapsed permission; a banner offers a one-click re-grant, and moved media relinks by file or folder, verified by content hash.                                                                                                                                     |
+| Area                            | State                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Panel layout, docking, tab drag | Works                                                                                                                                                                                                                                                                                                                                                                           |
+| Timeline editing                | Works. Drag, trim, razor, snapping, ripple/roll/slip/slide, multi-select drag across tracks, cut/copy/paste/duplicate. All undoable; Escape aborts a drag.                                                                                                                                                                                                                      |
+| Timeline zoom & scroll          | Works. Cursor-anchored zoom from ~4 hours down to a single frame, horizontal scroll, fit-to-window, resizable track lanes.                                                                                                                                                                                                                                                      |
+| Playback                        | Frame-accurate. One clock derived from AudioContext, WebCodecs decode per clip instance, synchronous rendering. J/K/L shuttle.                                                                                                                                                                                                                                                  |
+| Export                          | Works, and is deterministic. One frame written per timeline frame, timestamped from its frame index; audio mixed once up front. Codecs are negotiated with the real encoder and the file is named from what was actually written. Streams to disk for exports too large to hold in memory.                                                                                      |
+| Audio                           | Works. Per-clip volume, pan and fades; track mute/solo; a mixer with meters. Audio-only files play. The offline mix shares one code path with preview.                                                                                                                                                                                                                          |
+| Effects + keyframes             | Work. Eight effects, reorderable, individually bypassable, every parameter keyframable. Blur is separable and resolution-independent.                                                                                                                                                                                                                                           |
+| Undo / redo                     | Works. Document snapshots, so every edit undoes and redoes exactly.                                                                                                                                                                                                                                                                                                             |
+| Save / open                     | Works. `.videos` bundles are portable and carry a media table; older `.videos.json` files migrate on open.                                                                                                                                                                                                                                                                      |
+| Transitions                     | Work. Crossfade, dip-to-black and wipes, refused rather than faked when a clip has no handles to overlap into.                                                                                                                                                                                                                                                                  |
+| Titles / text clips             | Work. Rasterised at sequence resolution and composited as ordinary layers, so they inherit transform, opacity and effects.                                                                                                                                                                                                                                                      |
+| Transform / opacity / crop      | Work, and keyframe. Position, scale, rotation, anchor, opacity, crop and blend mode, with bezier easing on any of them.                                                                                                                                                                                                                                                         |
+| Media persistence               | Works. Handles survive a lapsed permission; a banner offers a one-click re-grant, and moved media relinks by file or folder, verified by content hash.                                                                                                                                                                                                                          |
+| Keyboard and panels             | The docking layout is navigable from the keyboard: tab bars are tablists with arrow-key navigation, splitters are separators that resize with the arrow keys, and `F6` cycles between panel regions. Every dialog is announced, closes on Escape, traps focus and gives it back. The shortcut reference is generated from the command registry, so it cannot drift out of date. |
 
 Nothing in the UI claims to do something it doesn't: unimplemented controls are
 disabled or labelled, not silently inert.
 
-See [`docs/architecture.md`](docs/architecture.md) for where this is going, and
+## Documentation
+
+The [**wiki**](wiki/README.md) is the place to start — an introduction and the
+project's values, a getting-started guide, a deep dive on every panel, the
+extension APIs for building on it, contributor information, and the roadmap.
+
+For implementers: [`docs/onboarding.md`](docs/onboarding.md) for the first six
+things to do with it and the four rules worth knowing before changing it,
+[`docs/architecture.md`](docs/architecture.md) for how the pieces fit,
+[`docs/plan.md`](docs/plan.md) for what is left, and
 [`docs/findings.md`](docs/findings.md) for the running log of defects found and
 trade-offs taken.
 
@@ -49,16 +59,17 @@ pnpm install
 pnpm dev          # http://localhost:5173
 ```
 
-| Command             | What it does                                                                              |
-| ------------------- | ----------------------------------------------------------------------------------------- |
-| `pnpm dev`          | Vite dev server                                                                           |
-| `pnpm build`        | Production build to `dist/`                                                               |
-| `pnpm typecheck`    | `tsc --noEmit` over `src/` and the config files                                           |
-| `pnpm lint`         | ESLint (type-checked rules)                                                               |
-| `pnpm format`       | Prettier, write                                                                           |
-| `pnpm test`         | Unit + property tests (Node)                                                              |
-| `pnpm test:browser` | Golden-frame and export-determinism tests (needs `pnpm exec playwright install chromium`) |
-| `pnpm check`        | typecheck + lint + test + build — what CI runs                                            |
+| Command             | What it does                                                                            |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `pnpm dev`          | Vite dev server                                                                         |
+| `pnpm build`        | Production build to `dist/`                                                             |
+| `pnpm typecheck`    | `tsc --noEmit` over `src/` and the config files                                         |
+| `pnpm lint`         | ESLint (type-checked rules)                                                             |
+| `pnpm format`       | Prettier, write                                                                         |
+| `pnpm test`         | Unit + property tests (Node)                                                            |
+| `pnpm test:browser` | Render, determinism and component tests (needs `pnpm exec playwright install chromium`) |
+| `pnpm test:perf`    | Performance budgets — scene build at 1000 clips                                         |
+| `pnpm check`        | typecheck + lint + test + perf + build — what CI runs                                   |
 
 ## Layout
 

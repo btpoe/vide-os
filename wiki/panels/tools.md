@@ -59,8 +59,7 @@ None of these operations can produce something the media cannot support:
 When an operation would exceed the material, it clamps rather than producing a
 freeze frame. Getting this exactly right at fractional speeds was the source of
 four separate bugs, all found by a property test asserting "every clip stays
-inside its source" — the details are in
-[`docs/findings.md`](../../docs/findings.md).
+inside its source" — the details are in the repository's engineering log.
 
 ## Escape aborts
 

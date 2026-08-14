@@ -42,12 +42,22 @@ export class VePanel extends HTMLElement {
     this._shadow.appendChild(template.content.cloneNode(true));
   }
 
-  attributeChangedCallback(_name: string, _old: string, _value: string) {
-    // Title/icon are now handled by the layout tab header
+  attributeChangedCallback(name: string, _old: string, value: string) {
+    // Title and icon are drawn by the layout's tab header. The title is still
+    // worth carrying here as the region's accessible name: the tab labels the
+    // tabpanel, and this labels the panel element inside it, which is what a
+    // screen reader lands on when the content is reached any other way.
+    if (name === "title") this._label(value);
   }
 
   connectedCallback() {
-    // No-op — header is managed by ve-panel-layout
+    this.setAttribute("role", "group");
+    this._label(this.getAttribute("title"));
+  }
+
+  private _label(title: string | null) {
+    if (title) this.setAttribute("aria-label", title);
+    else this.removeAttribute("aria-label");
   }
 }
 

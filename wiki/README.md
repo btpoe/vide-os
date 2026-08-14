@@ -77,10 +77,12 @@ Three rules, borrowed from the codebase itself:
   disagree, the code is right and the page is a bug — please
   [report it](contributing.md#reporting-a-documentation-bug).
 
-Companion documents inside the repository, aimed at implementers rather than
-users:
+Keeping that true is a rule, not an aspiration: any change to the application
+updates the wiki in the same change. [`CLAUDE.md`](../CLAUDE.md) at the
+repository root carries the mapping from source area to the page that documents
+it.
 
-- [`docs/architecture.md`](../docs/architecture.md) — how the pieces fit
-- [`docs/plan.md`](../docs/plan.md) — the phase plan and what is left
-- [`docs/findings.md`](../docs/findings.md) — the engineering log: every defect
-  found, every trade-off taken, and the reasoning behind both
+The repository also carries implementer-facing notes that this wiki does not
+duplicate — how the pieces fit and why, the phase plan and what is left, and an
+engineering log of every defect found and every trade-off taken. They live
+alongside the source in the repository, not in these pages.

@@ -43,10 +43,9 @@ Self-contained, low-risk, and immediately useful to everyone. See
 
 ### 5. Argue with a decision
 
-[`docs/findings.md`](../docs/findings.md) records the reasoning behind every
-significant trade-off, specifically so it can be challenged later with the
-context intact. If one of them is wrong, say so and say why. Bring a case, not a
-preference.
+The repository's engineering log records the reasoning behind every significant
+trade-off, specifically so it can be challenged later with the context intact.
+If one of them is wrong, say so and say why. Bring a case, not a preference.
 
 ---
 
@@ -69,8 +68,11 @@ different subsystems.
 ### Reporting a documentation bug
 
 If a page in this wiki disagrees with the app, the app is right and the page is
-wrong. Quote the line and say what actually happens. Two are already known — the
-in-app keyboard sheet is out of date about `J`/`L` and `Shift`+arrows.
+wrong. Quote the line and say what actually happens.
+
+The wiki is meant to be updated in the same change as the code — see
+[`CLAUDE.md`](../CLAUDE.md) for the mapping from source area to wiki page. A page
+that has drifted is a defect, not a chore for later.
 
 ---
 
@@ -90,6 +92,7 @@ Before you push:
 ```sh
 pnpm check          # typecheck + lint + format check + test + build
 pnpm test:browser   # anything touching WebGL2, WebCodecs, or a panel
+pnpm test:perf      # the performance budgets
 ```
 
 CI runs both on every push and pull request. It will not merge red.
@@ -143,16 +146,16 @@ cross-track path` is why the next person does not reintroduce the bug.
 
 ### A phase is not complete until its gaps are written down
 
-If you deliver 90% of something, the missing 10% goes in
-[`docs/findings.md`](../docs/findings.md) before you call it done. The failure
-mode this prevents is real: four specified items were once never built, never
-recorded, and therefore read as done for months.
+If you deliver 90% of something, the missing 10% goes in the engineering log
+before you call it done. The failure mode this prevents is real: four specified
+items were once never built, never recorded, and therefore read as done for
+months.
 
 ---
 
 ## Testing
 
-Five tiers, and it is usually obvious which one a change needs.
+Six tiers, and it is usually obvious which one a change needs.
 
 | Tier            | What it covers                                                                             | Where                     |
 | --------------- | ------------------------------------------------------------------------------------------ | ------------------------- |
@@ -161,6 +164,14 @@ Five tiers, and it is usually obvious which one a change needs.
 | **Render**      | Real WebGL2, probing named pixels; layer stacking, Y orientation, frame-leak assertions    | `test/browser/`           |
 | **Determinism** | Export, demux the result, assert exact frame count, timestamps, and burned-in counters     | `test/browser/`           |
 | **Component**   | Mount the real panel, dispatch real pointer events, assert on the document                 | `test/browser/*.test.tsx` |
+| **Perf**        | Budgets: scene build under 2 ms at 1000 clips, a preview frame under a display frame       | `test/perf/`              |
+
+Timing assertions are made non-flaky three ways: the **median** rather than the
+worst sample, numbers **always printed** whether they pass or fail, and a
+`VITE_PERF_ALLOWANCE` multiplier for slower machines. CI sets it — 3× for the
+Node suite, 5× for the browser one, where the runner has no GPU and Chromium
+falls back to software rasterization. The budget still catches what it exists
+for: a frame that has started costing an order of magnitude more than it did.
 
 ### Two rules about tests
 
@@ -216,12 +227,13 @@ frame-accuracy assertions trivial and keeps binaries out of git.
   reviewed properly.
 - **Say what you changed and why.** Link the finding or the roadmap item.
 - **Include the test.** If the change is not testable, say why in the PR.
-- **Record trade-offs in `docs/findings.md`** if you took any — including
+- **Record trade-offs in the engineering log** if you took any — including
   "I left this worse than ideal because X".
-- **Update the docs in the same PR.** `docs/architecture.md` once drifted far
-  enough to mislead, marking eight built systems as "planned" and describing two
-  deleted files in the present tense. A document that is wrong about what exists
-  is worse than no document, because it gets consulted instead of the code.
+- **Update the documentation in the same PR.** The architecture notes once
+  drifted far enough to mislead, marking eight built systems as "planned" and
+  describing two deleted files in the present tense. A document that is wrong
+  about what exists is worse than no document, because it gets consulted instead
+  of the code.
 
 Prettier and ESLint settle formatting. Do not argue about it; run `pnpm format`.
 
@@ -248,5 +260,4 @@ around it, that is a useful conversation to have now rather than later.
 
 ---
 
-**See also:** [Developer Guide](developer/README.md) · [Roadmap](roadmap.md) ·
-[`docs/findings.md`](../docs/findings.md)
+**See also:** [Developer Guide](developer/README.md) · [Roadmap](roadmap.md)

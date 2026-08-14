@@ -54,9 +54,9 @@ export/         codec negotiation, deterministic frame loop, muxing
 lib/            timecode, keyframes, geometry, waveforms, thumbnails
 ```
 
-Full detail, including the reasoning behind each boundary, is in
-[`docs/architecture.md`](../../docs/architecture.md). The five rules below are
-the ones you need before writing any code.
+Full detail, including the reasoning behind each boundary, is in the
+architecture notes kept with the source. The five rules below are the ones you
+need before writing any code.
 
 ### 1. The document is the single source of truth
 

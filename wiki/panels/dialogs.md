@@ -23,9 +23,10 @@ implementation of an action behind a menu item.
 
 The top-right of the menu bar shows the active [tool](tools.md).
 
-> **Known bug:** hovering across the menu bar while a menu is open switches to
-> the hovered menu, and the subsequent click then toggles it closed. Cosmetic,
-> pre-existing, tracked.
+With one menu open, moving the pointer across the bar switches to the menu you
+move onto. A click that lands at the end of that move keeps it open — it is the
+end of one gesture, not a second click on the trigger. Clicking a trigger whose
+menu is already open still closes it.
 
 ### The recent projects list
 
@@ -193,10 +194,16 @@ stopped being saved, with the error warned to a console nobody was reading.
 | **render**   | Time inside the last render call, and the gap since the previous rendered frame          |
 | **quality**  | Current render target size and the ladder rung (`full`, `1/2`, `1/4`). Amber below full. |
 | **dropped**  | Dropped frames, out of the total attempted                                               |
+| **held**     | Passes that found nothing decoded and held the previous picture. Amber above zero.       |
 | **decoders** | Active decoders against the pool budget                                                  |
 | **frames**   | Cached frames, and cache bytes against the byte budget                                   |
 | **hit rate** | Frame cache hit rate                                                                     |
 | **open**     | `VideoFrame`s created minus closed, with both totals                                     |
+
+The **held** counter is the decoder failing to keep up, seen from the inside. It
+is what the [preview](preview.md#a-frame-the-decoder-has-not-caught-up-with)
+does instead of flashing black, so a climbing number here is the symptom that
+used to be visible as flicker.
 
 The **open** counter is the one measurement that says whether the `.close()`
 discipline the media engine depends on is actually being kept. A cached frame is
@@ -209,18 +216,57 @@ is measuring.
 
 ---
 
-## Keyboard Shortcuts and About
+## Getting Started, Keyboard Shortcuts and About
 
-**Help ▸ Keyboard Shortcuts** opens a reference sheet. **Help ▸ About VideOS**
-shows the build's stack and browser requirements.
+**Help ▸ Getting Started** opens the same six first steps as
+[Getting Started](../getting-started.md), in the app — because the editor opens
+on an empty timeline and a black preview, and nothing else on screen says what
+to do first.
 
-> **Note:** the in-app shortcut sheet is currently out of date in two places —
-> it describes `J`/`L` as five-second jumps (they are real shuttle) and
-> `Shift`+arrows as nudging by one second (it is one frame). The
-> [Keyboard Reference](../keyboard-reference.md) in this wiki is generated from
-> the command registry and is correct.
+**Help ▸ Keyboard Shortcuts** (`⇧?`) opens the reference sheet. It is
+**generated from the command registry**: every command carrying a shortcut
+appears in its own category with the chord formatted for your platform, so a new
+command cannot be added without documenting itself.
 
-Source: `src/App.tsx`, `src/panels/ExportDialog.tsx`,
+That matters because the sheet used to be a hand-written list, and it had
+drifted — `J` and `L` were described as five-second jumps long after they became
+shuttle controls, and markers, three-point editing, `Escape` and the zoom
+commands were missing entirely. A reference that is wrong is worse than none,
+because the reader believes it.
+
+The one section that is not generated is the panel layout's own keys, which are
+handled by the docking layout rather than the registry.
+
+**Help ▸ About VideOS** shows the build's stack and browser requirements.
+
+---
+
+## Every dialog is a dialog
+
+All of them — export, media reconnection, crash recovery, the shortcut sheet,
+Getting Started, About, and the notes from opening an older project — are built
+from one `Overlay` component, and therefore all get the same behaviour:
+
+- `role="dialog"` with `aria-modal` and a heading that names it, so it is
+  announced rather than being an anonymous box.
+- **Escape closes it**, and so does clicking the backdrop.
+- **Tab cycles inside it.** Focus moves into the dialog when it opens and back
+  to whatever had it when the dialog closes.
+- Keystrokes do not reach the app behind it, so `Space` cannot start playback
+  under an open dialog.
+
+Six of these were converted to it and three were not, which is why this is
+stated rather than assumed: export, relink and recovery stayed plain `div`s over
+a backdrop — nothing announced, no way out but the mouse — for as long as the
+component existed without them using it.
+
+**The export dialog refuses to close while it is rendering.** Escape, the
+backdrop and the ✕ are blocked together by one flag, because a dialog that
+ignores Escape while still showing an enabled close button is a control that
+lies. **Cancel Export** is the way to stop a render, and it says so.
+
+Source: `src/App.tsx`, `src/panels/ShortcutSheet.tsx`,
+`src/panels/GettingStarted.tsx`, `src/panels/ExportDialog.tsx`,
 `src/panels/RelinkDialog.tsx`, `src/panels/RecoveryDialog.tsx`,
-`src/panels/DebugHud.tsx`, `src/lib/autosave.ts`, `src/model/io.ts`,
+`src/panels/Overlay.tsx`, `src/panels/DebugHud.tsx`, `src/lib/autosave.ts`, `src/model/io.ts`,
 `src/export/`.

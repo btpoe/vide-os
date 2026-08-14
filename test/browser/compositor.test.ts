@@ -162,10 +162,15 @@ describe("compositor", () => {
     // The old renderFrame was async and was called without await from the rAF
     // loop, so several renders overlapped and stomped shared GL state. Being
     // synchronous is what makes that impossible.
+    //
+    // Asserted as "not a thenable" rather than "returns undefined": the pass
+    // now reports whether it drew this frame or held the previous picture, and
+    // pinning the exact return value tested the wrong property.
     const canvas = makeCanvas();
     const comp = createCompositor(canvas)!;
     const result = renderFrame(comp, 0) as unknown;
-    expect(result).toBeUndefined();
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(typeof (result as { then?: unknown })?.then).not.toBe("function");
     disposeCompositor(comp);
   });
 });

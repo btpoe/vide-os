@@ -6,6 +6,7 @@ const UI_PREFS_KEY = "ui-prefs";
 interface PersistedUIPrefs {
   selectedTool: string;
   theme: "dark" | "light";
+  showDebugHud: boolean;
 }
 
 export type LayoutNodeType = "row" | "col" | "tabs" | "panel";
@@ -23,6 +24,8 @@ export interface UIState {
   layout: LayoutNode;
   selectedTool: string;
   theme: "dark" | "light";
+  /** Whether the preview overlays the decoder, cache and frame-time counters. */
+  showDebugHud: boolean;
 }
 
 const STORAGE_KEY = "vide-os-layout";
@@ -97,6 +100,7 @@ function loadUIPrefs(): Partial<UIState> {
     ? {
         selectedTool: saved.selectedTool ?? "select",
         theme: saved.theme ?? "dark",
+        showDebugHud: saved.showDebugHud ?? false,
       }
     : {};
 }
@@ -105,6 +109,7 @@ const [uiState, setUIState] = createStore<UIState>({
   layout: loadLayout() || getDefaultLayout(),
   selectedTool: "select",
   theme: "dark",
+  showDebugHud: false,
   ...loadUIPrefs(),
 });
 
@@ -113,6 +118,7 @@ export function initUIPersistence(): void {
   createPersistEffect(UI_PREFS_KEY, (): PersistedUIPrefs => ({
     selectedTool: uiState.selectedTool,
     theme: uiState.theme,
+    showDebugHud: uiState.showDebugHud,
   }));
 }
 
@@ -132,6 +138,10 @@ export function resetLayout(): void {
 
 export function setSelectedTool(tool: string): void {
   setUIState("selectedTool", tool);
+}
+
+export function toggleDebugHud(): void {
+  setUIState("showDebugHud", (shown) => !shown);
 }
 
 export function updateLayout(layout: LayoutNode): void {
